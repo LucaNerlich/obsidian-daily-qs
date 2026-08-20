@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-08-20
+## [1.0.0] - 2026-08-20
 
 ### Added
 
@@ -18,3 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New items insert under a `## Tasks` heading when present, otherwise append
   at the end of the note. Adding creates today's note from the configured
   template when needed.
+- Marketplace-ready musl x86_64 backend bundle with byte-identical CI
+  attestation (`make verify-bundle`).
+
+### Fixed
+
+- Exit `watch` when stdout is broken so a crashed shell cannot leave a
+  polling helper behind.
+- Reject `..` / null path components from daily-notes settings so notes and
+  templates cannot escape the vault root.
+- Drop HTML markup from helper JSON before QML display and force
+  `Text.PlainText` for note-derived strings.
+- Reject multiline todo text so `add` cannot inject extra markdown lines.
+
+## [0.1.0] - 2026-08-20
+
+### Added
+
+- Development scaffold (superseded by 1.0.0).
