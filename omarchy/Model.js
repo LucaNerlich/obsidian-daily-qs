@@ -42,10 +42,17 @@ function parseLine(line) {
       if (!item || typeof item !== "object") continue;
       var lineNo = Number(item.line);
       if (!isFinite(lineNo) || lineNo < 1) continue;
+      var depth = Number(item.depth);
+      if (!isFinite(depth) || depth < 0) depth = 0;
+      var parentLine = null;
+      if (typeof item.parentLine === "number" && isFinite(item.parentLine) && item.parentLine >= 1)
+        parentLine = Math.floor(item.parentLine);
       todos.push({
         line: Math.floor(lineNo),
         checked: item.checked === true,
-        text: safeText(item.text)
+        text: safeText(item.text),
+        depth: Math.min(32, Math.floor(depth)),
+        parentLine: parentLine
       });
     }
   }
@@ -133,10 +140,34 @@ function emptyMessage(status, openOnly) {
   return "";
 }
 
+/**
+ * Todos to show for the current openOnly setting.
+ *
+ * Nested lists keep the tree readable: when openOnly is on, an open child
+ * pulls its (possibly checked) ancestors in so it doesn't float alone, and
+ * a checked parent with open descendants stays visible as their anchor.
+ */
 function visibleTodos(status, openOnly) {
   if (!status || !status.todos) return [];
   if (!openOnly) return status.todos;
-  return status.todos.filter(function(t) { return !t.checked; });
+
+  var todos = status.todos;
+  var byLine = {};
+  for (var i = 0; i < todos.length; i++) byLine[todos[i].line] = todos[i];
+
+  var keep = {};
+  for (var j = 0; j < todos.length; j++) {
+    var todo = todos[j];
+    if (todo.checked) continue;
+    keep[todo.line] = true;
+    var parent = todo.parentLine;
+    while (parent && byLine[parent]) {
+      keep[parent] = true;
+      parent = byLine[parent].parentLine;
+    }
+  }
+
+  return todos.filter(function(t) { return keep[t.line] === true; });
 }
 
 /** Shift YYYY-MM-DD by delta days. Returns "" on invalid input. */

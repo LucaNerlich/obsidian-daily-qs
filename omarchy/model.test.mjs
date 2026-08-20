@@ -40,8 +40,8 @@ test("parseLine ok snapshot", () => {
       isToday: true,
       obsidianUri: "obsidian://open?path=/vault/Daily/2026-08-20.md",
       todos: [
-        { line: 3, checked: false, text: "Ship" },
-        { line: 4, checked: true, text: "Done" },
+        { line: 3, checked: false, text: "Ship", depth: 0 },
+        { line: 4, checked: true, text: "Done", depth: 1, parentLine: 3 },
       ],
     }),
   );
@@ -51,6 +51,41 @@ test("parseLine ok snapshot", () => {
   assert.equal(snap.todos.length, 2);
   assert.equal(snap.todos[0].text, "Ship");
   assert.match(snap.obsidianUri, /^obsidian:\/\//);
+});
+
+test("parseLine carries depth and parentLine", () => {
+  const snap = Model.parseLine(
+    JSON.stringify({
+      state: "ok",
+      todos: [
+        { line: 1, checked: false, text: "top", depth: 0, parentLine: null },
+        { line: 2, checked: false, text: "child", depth: 1, parentLine: 1 },
+        { line: 3, checked: false, text: "grand", depth: 2, parentLine: 2 },
+      ],
+    }),
+  );
+  assert.equal(snap.todos[0].depth, 0);
+  assert.equal(snap.todos[0].parentLine, null);
+  assert.equal(snap.todos[1].depth, 1);
+  assert.equal(snap.todos[1].parentLine, 1);
+  assert.equal(snap.todos[2].depth, 2);
+  assert.equal(snap.todos[2].parentLine, 2);
+});
+
+test("parseLine clamps invalid depth/parentLine", () => {
+  const snap = Model.parseLine(
+    JSON.stringify({
+      state: "ok",
+      todos: [
+        { line: 1, checked: false, text: "bad-depth", depth: -3, parentLine: "x" },
+        { line: 2, checked: false, text: "deep", depth: 999, parentLine: 0 },
+      ],
+    }),
+  );
+  assert.equal(snap.todos[0].depth, 0);
+  assert.equal(snap.todos[0].parentLine, null);
+  assert.equal(snap.todos[1].depth, 32);
+  assert.equal(snap.todos[1].parentLine, null);
 });
 
 test("parseLine strips markup in error/text", () => {
@@ -88,6 +123,33 @@ test("visibleTodos openOnly", () => {
   };
   assert.equal(Model.visibleTodos(status, false).length, 2);
   assert.equal(Model.visibleTodos(status, true).length, 1);
+});
+
+test("visibleTodos openOnly keeps ancestors of open children", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: true, text: "parent", depth: 0, parentLine: null },
+      { line: 2, checked: false, text: "child", depth: 1, parentLine: 1 },
+      { line: 3, checked: true, text: "sibling", depth: 0, parentLine: null },
+    ],
+  };
+  const visible = Model.visibleTodos(status, true);
+  assert.equal(visible.length, 2);
+  assert.equal(visible[0].text, "parent");
+  assert.equal(visible[1].text, "child");
+});
+
+test("visibleTodos openOnly walks the full ancestor chain", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: true, text: "root", depth: 0, parentLine: null },
+      { line: 2, checked: true, text: "mid", depth: 1, parentLine: 1 },
+      { line: 3, checked: false, text: "leaf", depth: 2, parentLine: 2 },
+      { line: 4, checked: true, text: "unrelated", depth: 0, parentLine: null },
+    ],
+  };
+  const visible = Model.visibleTodos(status, true);
+  assert.deepEqual(visible.map((t) => t.text), ["root", "mid", "leaf"]);
 });
 
 test("shiftDate", () => {

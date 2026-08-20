@@ -15,6 +15,14 @@ pub struct TodoItem {
     pub line: usize,
     pub checked: bool,
     pub text: String,
+    /// Nesting level under its parent todo: 0 = top-level, 1 = first level
+    /// of indentation, … Raw indentation is normalized so a todo never nests
+    /// more than one level deeper than the todo before it.
+    pub depth: usize,
+    /// 1-based line of the nearest preceding todo at a shallower depth
+    /// (the parent), if any.
+    #[serde(rename = "parentLine", skip_serializing_if = "Option::is_none")]
+    pub parent_line: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -94,6 +102,8 @@ mod tests {
                 line: 3,
                 checked: false,
                 text: "Ship".into(),
+                depth: 0,
+                parent_line: None,
             }],
         );
         let json = serde_json::to_value(&snap).unwrap();
@@ -101,6 +111,36 @@ mod tests {
         assert_eq!(json["openCount"], 1);
         assert_eq!(json["doneCount"], 0);
         assert_eq!(json["todos"][0]["line"], 3);
+    }
+
+    #[test]
+    fn serializes_nested_todos() {
+        let snap = Snapshot::ok(
+            "2026-08-20".into(),
+            "/vault/2026-08-20.md".into(),
+            true,
+            vec![
+                TodoItem {
+                    line: 3,
+                    checked: false,
+                    text: "Parent".into(),
+                    depth: 0,
+                    parent_line: None,
+                },
+                TodoItem {
+                    line: 4,
+                    checked: false,
+                    text: "Child".into(),
+                    depth: 1,
+                    parent_line: Some(3),
+                },
+            ],
+        );
+        let json = serde_json::to_value(&snap).unwrap();
+        assert_eq!(json["todos"][0]["depth"], 0);
+        assert!(json["todos"][0].get("parentLine").is_none());
+        assert_eq!(json["todos"][1]["depth"], 1);
+        assert_eq!(json["todos"][1]["parentLine"], 3);
     }
 
     #[test]

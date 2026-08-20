@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Nested todo lists: checkbox indentation (tabs or two-space levels) is parsed
+  into `depth` / `parentLine` per item, rendered indented in the panel, and
+  preserved by carry-over. The open-only filter keeps ancestors of open items
+  so nested context stays readable.
+- Scrollable panel: content flicks vertically with a scrollbar when the list
+  exceeds the panel height; Up/Down/j/k scroll while the input field is not
+  focused.
+- New todos insert under a `## Todos` heading as well as `## Tasks`.
+
+### Fixed
+
+- Arrow keys are no longer swallowed while the add-todo field has focus.
+
 ## [1.1.0] - 2026-08-20
 
 ### Added

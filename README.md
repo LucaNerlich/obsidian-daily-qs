@@ -6,7 +6,7 @@ Omarchy Quattro bar widget for today's [Obsidian daily note](https://obsidian.md
 
 - Omarchy Quattro (Quickshell-based shell)
 - An Obsidian vault with the Daily notes core plugin configured
-- `OBSIDIAN_VAULT_ROOT` set to the absolute path of that vault (for the shell session that runs `omarchy-shell`)
+- `OBSIDIAN_VAULT_ROOT` set to the absolute path of that vault for the graphical session — see [Set the vault path](#set-the-vault-path)
 
 Daily note location and date format are read from `.obsidian/daily-notes.json` (`folder`, `format`, optional `template`), relative to the vault root.
 
@@ -23,7 +23,6 @@ obsidian-daily-qs add|toggle ──(JSON line)──▶ BarWidget
 ## Install
 
 ```bash
-export OBSIDIAN_VAULT_ROOT="/path/to/your/vault"
 omarchy plugin add https://github.com/LucaNerlich/obsidian-daily-qs.git --enable
 ```
 
@@ -36,17 +35,41 @@ omarchy plugin remove luca.obsidian-daily
 
 The plugin bundles a statically linked x86_64 musl build of its backend (`omarchy/bin/obsidian-daily-qs`). If the bundled binary cannot start, the widget falls back to an `obsidian-daily-qs` binary on `PATH` (`cargo install --path .`).
 
-Ensure `OBSIDIAN_VAULT_ROOT` is available to the Omarchy shell (e.g. in `~/.config/environment.d/` or your Hyprland env).
+### Set the vault path
+
+The backend reads `OBSIDIAN_VAULT_ROOT` from its process environment. The Omarchy shell runs as a child of Hyprland, so an `export` in `~/.bashrc` (or in a terminal) does **not** reach it. Set the variable for the graphical session instead:
+
+**Option A — Hyprland env** (per-session, applies without logging out):
+
+```lua
+-- ~/.config/hypr/hyprland.lua
+hl.env("OBSIDIAN_VAULT_ROOT", "/home/you/Documents/notizen")
+```
+
+```bash
+hyprctl reload && omarchy restart shell
+```
+
+**Option B — systemd user environment** (applies at next login, also covers apps launched via `uwsm-app`):
+
+```ini
+# ~/.config/environment.d/obsidian-vault.conf
+OBSIDIAN_VAULT_ROOT=/home/you/Documents/notizen
+```
+
+Setting both keeps the current session working until the next login. Use `pgrep -f 'obsidian-daily-qs watch'` and `/proc/<pid>/environ` to verify the backend sees the variable.
 
 ## Usage
 
 - **Bar**: shows done/total for today (`☐ 2/5`). Left-click opens the panel with focus in the add field.
 - **Panel**:
   - List todos; click a row to toggle.
+  - Nested todos (indented with tabs or two spaces per level in the note) render indented; the open-only filter keeps parents of open items visible.
+  - Scrolls vertically with the mouse wheel, scrollbar, or Up/Down/j/k (when not typing in the add field).
   - Add with Enter / `+`.
   - **Open only** / **All todos** toggles completed visibility (default from `openOnly` setting).
   - **◀ / ● / ▶** move to previous day, today, or next day.
-  - **Carry over N** (when viewing today) copies yesterday's still-open todos.
+  - **Carry over N** (when viewing today) copies yesterday's still-open todos (preserving nesting).
   - Open-in-Obsidian launches `obsidian://open?path=…` via `xdg-open`.
 - **Shell**: `omarchy-shell shell summon luca.obsidian-daily '{}'` / `omarchy-shell shell hide luca.obsidian-daily`.
 

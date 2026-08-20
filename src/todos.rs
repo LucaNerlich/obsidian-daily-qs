@@ -16,26 +16,58 @@ fn checkbox_re() -> Regex {
 }
 
 fn tasks_heading_re() -> Regex {
-    Regex::new(r"(?i)^#{1,6}\s+tasks\s*$").expect("tasks heading regex")
+    // Accept both "Tasks" and "Todos" headings (case-insensitive).
+    Regex::new(r"(?i)^#{1,6}\s+(tasks|todos)\s*$").expect("tasks heading regex")
+}
+
+/// Count indentation levels of a checkbox prefix: every tab is one level,
+/// every two spaces one level (matches Obsidian's list indentation).
+fn indent_level(indent: &str) -> usize {
+    let tabs = indent.chars().filter(|c| *c == '\t').count();
+    let spaces = indent.chars().filter(|c| *c == ' ').count();
+    tabs + spaces / 2
 }
 
 /// Parse all checkbox todos from note body. Line numbers are 1-based.
+///
+/// Nested list items are normalized: each todo's `depth` is at most one level
+/// deeper than the previous todo's, and `parent_line` points to the nearest
+/// preceding todo at a shallower depth. An indented first todo has no parent
+/// and is treated as top-level.
 pub fn parse_todos(content: &str) -> Vec<TodoItem> {
     let re = checkbox_re();
-    content
-        .lines()
-        .enumerate()
-        .filter_map(|(idx, line)| {
-            let caps = re.captures(line)?;
-            let checked = !caps[3].eq(" ");
-            let text = caps[5].to_string();
-            Some(TodoItem {
-                line: idx + 1,
-                checked,
-                text,
-            })
-        })
-        .collect()
+    let mut todos = Vec::new();
+    // Line numbers of open ancestors, indexed by depth (stack[d] has depth d).
+    let mut stack: Vec<usize> = Vec::new();
+    let mut last_depth = 0usize;
+    for (idx, line) in content.lines().enumerate() {
+        let Some(caps) = re.captures(line) else {
+            continue;
+        };
+        let line_no = idx + 1;
+        let checked = !caps[3].eq(" ");
+        let text = caps[5].to_string();
+        let raw = indent_level(&caps[1]);
+        let depth = if stack.is_empty() {
+            0
+        } else {
+            raw.min(last_depth + 1)
+        };
+        while stack.len() > depth {
+            stack.pop();
+        }
+        let parent_line = stack.last().copied();
+        stack.push(line_no);
+        last_depth = depth;
+        todos.push(TodoItem {
+            line: line_no,
+            checked,
+            text,
+            depth,
+            parent_line,
+        });
+    }
+    todos
 }
 
 pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
@@ -81,7 +113,12 @@ fn open_todo_count(vault: &Vault, date: NaiveDate) -> Result<usize, VaultError> 
     Ok(parse_todos(&content).iter().filter(|t| !t.checked).count())
 }
 
-fn open_todo_texts(vault: &Vault, date: NaiveDate) -> Result<Vec<String>, VaultError> {
+struct OpenTodo {
+    depth: usize,
+    text: String,
+}
+
+fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, VaultError> {
     let config = vault.daily_notes_config()?;
     let path = vault.daily_note_path(&config, date)?;
     if !path.exists() {
@@ -92,17 +129,22 @@ fn open_todo_texts(vault: &Vault, date: NaiveDate) -> Result<Vec<String>, VaultE
     Ok(parse_todos(&content)
         .into_iter()
         .filter(|t| !t.checked)
-        .map(|t| t.text)
+        .map(|t| OpenTodo {
+            depth: t.depth,
+            text: t.text,
+        })
         .collect())
 }
 
-/// Copy yesterday's still-open todos into `date` (usually today).
+/// Copy yesterday's still-open todos into `date` (usually today), preserving
+/// their nesting. Todos whose parent was not carried are re-parented under
+/// the nearest carried ancestor (depth is clamped to previous depth + 1).
 pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
     let prev = date
         .checked_sub_days(chrono::Days::new(1))
         .ok_or_else(|| VaultError::Io("date underflow".into()))?;
-    let texts = open_todo_texts(vault, prev)?;
-    if texts.is_empty() {
+    let items = open_todo_items(vault, prev)?;
+    if items.is_empty() {
         return read_snapshot(vault, date);
     }
     let existing: std::collections::HashSet<String> = {
@@ -114,12 +156,15 @@ pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError
             .map(|t| t.text)
             .collect()
     };
-    for text in texts {
-        if existing.contains(&text) {
-            continue;
-        }
-        add_todo(vault, date, &text)?;
+    let to_add: Vec<(usize, String)> = items
+        .into_iter()
+        .filter(|item| !existing.contains(&item.text))
+        .map(|item| (item.depth, item.text))
+        .collect();
+    if to_add.is_empty() {
+        return read_snapshot(vault, date);
     }
+    add_todo_lines(vault, date, &to_add)?;
     read_snapshot(vault, date)
 }
 
@@ -169,7 +214,8 @@ fn expand_template(raw: &str, date: NaiveDate) -> String {
         .replace("{{time}}", "")
 }
 
-/// Append a new open todo. Creates the note when missing.
+/// Append new open todos with the given nesting depths. Creates the note
+/// when missing.
 pub fn add_todo(vault: &Vault, date: NaiveDate, text: &str) -> Result<Snapshot, VaultError> {
     let text = text.trim();
     if text.is_empty() {
@@ -178,14 +224,39 @@ pub fn add_todo(vault: &Vault, date: NaiveDate, text: &str) -> Result<Snapshot, 
     if text.contains('\n') || text.contains('\r') {
         return Err(VaultError::Io("todo text must be a single line".into()));
     }
+    add_todo_lines(vault, date, &[(0, text.to_string())])?;
+    read_snapshot(vault, date)
+}
+
+/// Append the given `(depth, text)` todos as indented `- [ ] …` lines.
+/// Depths are clamped so each line nests at most one level deeper than the
+/// previous inserted line.
+fn add_todo_lines(
+    vault: &Vault,
+    date: NaiveDate,
+    items: &[(usize, String)],
+) -> Result<(), VaultError> {
     let config = vault.daily_notes_config()?;
     let path = vault.daily_note_path(&config, date)?;
     ensure_note(vault, &config, &path, date)?;
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
-    let next = insert_todo_line(&content, text);
-    write_atomic(&path, &next)?;
-    read_snapshot(vault, date)
+    let mut prev_depth: Option<usize> = None;
+    let lines: Vec<String> = items
+        .iter()
+        .map(|(depth, text)| {
+            // The first inserted line has no carried ancestor, so orphaned
+            // children (parent checked / not carried) become top-level.
+            let d = match prev_depth {
+                None => 0,
+                Some(p) => (*depth).min(p + 1),
+            };
+            prev_depth = Some(d);
+            format!("{}- [ ] {}", "  ".repeat(d), text)
+        })
+        .collect();
+    let next = insert_todo_lines(&content, &lines);
+    write_atomic(&path, &next)
 }
 
 /// Toggle the checkbox on the given 1-based line.
@@ -208,8 +279,7 @@ pub fn toggle_todo(vault: &Vault, date: NaiveDate, line: usize) -> Result<Snapsh
     read_snapshot(vault, date)
 }
 
-fn insert_todo_line(content: &str, text: &str) -> String {
-    let item = format!("- [ ] {text}");
+fn insert_todo_lines(content: &str, items: &[String]) -> String {
     let heading = tasks_heading_re();
     let lines: Vec<&str> = content.lines().collect();
     let mut insert_at: Option<usize> = None;
@@ -228,13 +298,15 @@ fn insert_todo_line(content: &str, text: &str) -> String {
     let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
     match insert_at {
         Some(at) => {
-            out.insert(at, item);
+            for (offset, item) in items.iter().enumerate() {
+                out.insert(at + offset, item.clone());
+            }
         }
         None => {
             if !out.is_empty() && !out.last().map(|s| s.is_empty()).unwrap_or(true) {
                 out.push(String::new());
             }
-            out.push(item);
+            out.extend(items.iter().cloned());
         }
     }
     let mut body = out.join("\n");
@@ -341,6 +413,49 @@ mod tests {
     }
 
     #[test]
+    fn parses_nested_todos() {
+        let todos = parse_todos(
+            "- [ ] parent\n\t- [ ] tab-child\n  - [ ] space-child\n    - [ ] grand-child\n- [ ] sibling\n",
+        );
+        assert_eq!(todos.len(), 5);
+        assert_eq!(todos[0].depth, 0);
+        assert_eq!(todos[0].parent_line, None);
+        // Tab and two spaces are both one level.
+        assert_eq!(todos[1].depth, 1);
+        assert_eq!(todos[1].parent_line, Some(todos[0].line));
+        assert_eq!(todos[2].depth, 1);
+        assert_eq!(todos[2].parent_line, Some(todos[0].line));
+        assert_eq!(todos[3].depth, 2);
+        assert_eq!(todos[3].parent_line, Some(todos[2].line));
+        assert_eq!(todos[4].depth, 0);
+        assert_eq!(todos[4].parent_line, None);
+    }
+
+    #[test]
+    fn normalizes_deep_indentation_and_lone_nested_todos() {
+        // A todo can only nest one level deeper than the previous one, and an
+        // indented first todo has no parent, so it becomes top-level.
+        let todos = parse_todos("      - [ ] orphan\n- [ ] parent\n        - [ ] child\n");
+        assert_eq!(todos[0].depth, 0);
+        assert_eq!(todos[0].parent_line, None);
+        assert_eq!(todos[1].depth, 0);
+        assert_eq!(todos[2].depth, 1);
+        assert_eq!(todos[2].parent_line, Some(todos[1].line));
+    }
+
+    #[test]
+    fn adds_under_todos_heading() {
+        let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n- [ ] existing\n\n## Notes\n");
+        add_todo(&vault, date, "new one").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        let todos_idx = lines.iter().position(|l| *l == "## Todos").unwrap();
+        assert_eq!(lines[todos_idx + 2], "- [ ] new one");
+        assert!(lines.contains(&"- [ ] existing"));
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
     fn adds_under_tasks_heading() {
         let (vault, date, note) = vault_with("# Day\n\n## Tasks\n\n- [ ] existing\n\n## Notes\n");
         add_todo(&vault, date, "new one").unwrap();
@@ -398,6 +513,49 @@ mod tests {
         assert!(body.contains("## Tasks"));
         assert!(body.contains("- [ ] first"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn carry_over_preserves_nesting() {
+        let (vault, today, _) = vault_with("- [ ] keep\n");
+        let ynote = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(
+            &ynote,
+            "- [ ] parent\n  - [ ] child\n  - [x] done-child\n- [x] finished\n- [ ] solo\n",
+        )
+        .unwrap();
+        let snap = carry_over(&vault, today).unwrap();
+        let todos = snap.todos.unwrap();
+        assert_eq!(todos.len(), 4);
+        assert_eq!(todos[0].text, "keep");
+        assert_eq!(todos[1].text, "parent");
+        assert_eq!(todos[1].depth, 0);
+        assert_eq!(todos[2].text, "child");
+        assert_eq!(todos[2].depth, 1);
+        assert_eq!(todos[2].parent_line, Some(todos[1].line));
+        assert_eq!(todos[3].text, "solo");
+        assert_eq!(todos[3].depth, 0);
+        let note = vault.root().join("Daily/2026-08-20.md");
+        let body = fs::read_to_string(&note).unwrap();
+        assert!(body.contains("- [ ] parent\n  - [ ] child\n- [ ] solo\n"));
+        assert!(!body.contains("done-child"));
+        assert!(!body.contains("finished"));
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_reparents_orphaned_children() {
+        // Child of a checked parent: the parent is not carried, so the child
+        // is clamped to one level under the previous carried todo.
+        let (vault, today, _) = vault_with("");
+        let ynote = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&ynote, "- [x] parent\n    - [ ] deep-child\n").unwrap();
+        let snap = carry_over(&vault, today).unwrap();
+        let todos = snap.todos.unwrap();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].text, "deep-child");
+        assert_eq!(todos[0].depth, 0);
+        let _ = fs::remove_dir_all(vault.root());
     }
 
     #[test]

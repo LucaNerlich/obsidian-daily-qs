@@ -108,175 +108,202 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // While the input field has focus, keys (arrows, backspace, …) belong
+      // to the editor. Otherwise Up/Down/j/k scroll the todo list.
+      blocked: inputField.activeFocus
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-    }
+      onMoveRequested: function(dx, dy) {
+        if (dy === 0) return
+        panelFlick.contentY = Math.max(0, Math.min(
+          panelFlick.contentY + dy * Style.space(44),
+          Math.max(0, panelFlick.contentHeight - panelFlick.height)))
+      }
 
-    Column {
-      id: column
-      width: parent.width
-      spacing: Style.space(10)
+      Flickable {
+        id: panelFlick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-      PanelHero {
-        width: parent.width
-        title: "Obsidian Daily"
-        meta: root.metaText
-        detail: root.date !== "" ? root.date : "Daily note"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
+        Column {
+          id: column
+          width: panelFlick.width
+          spacing: Style.space(10)
 
-        iconComponent: Component {
-          Text {
-            text: "\u2610"
-            textFormat: Text.PlainText
-            color: root.statusState === "error" ? root.urgent : root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.display
+          PanelHero {
+            width: parent.width
+            title: "Obsidian Daily"
+            meta: root.metaText
+            detail: root.date !== "" ? root.date : "Daily note"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+
+            iconComponent: Component {
+              Text {
+                text: "\u2610"
+                textFormat: Text.PlainText
+                color: root.statusState === "error" ? root.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.display
+              }
+            }
+
+            trailingControl: Component {
+              Row {
+                spacing: Style.space(4)
+
+                PanelActionButton {
+                  iconText: "\u25C0"
+                  tooltipText: "Previous day"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.shiftDay(-1)
+                }
+
+                PanelActionButton {
+                  iconText: "\u25CF"
+                  tooltipText: "Today"
+                  visible: !root.isToday
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.goToday()
+                }
+
+                PanelActionButton {
+                  iconText: "\u25B6"
+                  tooltipText: "Next day"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.shiftDay(1)
+                }
+
+                PanelActionButton {
+                  iconText: "\u2398"
+                  tooltipText: "Open in Obsidian"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.openInObsidian()
+                }
+              }
+            }
           }
-        }
 
-        trailingControl: Component {
+          RowLayout {
+            width: parent.width
+            spacing: Style.space(6)
+
+            TextField {
+              id: inputField
+              Layout.fillWidth: true
+              placeholderText: "Add a todo…"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              onAccepted: root.addTodo()
+              Keys.onEscapePressed: root.close()
+            }
+
+            PanelActionButton {
+              iconText: "+"
+              tooltipText: "Add todo"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.addTodo()
+            }
+          }
+
           Row {
-            spacing: Style.space(4)
+            width: parent.width
+            spacing: Style.space(8)
 
-            PanelActionButton {
-              iconText: "\u25C0"
-              tooltipText: "Previous day"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.shiftDay(-1)
+            Text {
+              text: root.openOnly ? "Open only" : "All todos"
+              textFormat: Text.PlainText
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.openOnly = !root.openOnly
+              }
             }
 
-            PanelActionButton {
-              iconText: "\u25CF"
-              tooltipText: "Today"
-              visible: !root.isToday
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.goToday()
-            }
-
-            PanelActionButton {
-              iconText: "\u25B6"
-              tooltipText: "Next day"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.shiftDay(1)
-            }
-
-            PanelActionButton {
-              iconText: "\u2398"
-              tooltipText: "Open in Obsidian"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.openInObsidian()
-            }
-          }
-        }
-      }
-
-      RowLayout {
-        width: parent.width
-        spacing: Style.space(6)
-
-        TextField {
-          id: inputField
-          Layout.fillWidth: true
-          placeholderText: "Add a todo…"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          onAccepted: root.addTodo()
-          Keys.onEscapePressed: root.close()
-        }
-
-        PanelActionButton {
-          iconText: "+"
-          tooltipText: "Add todo"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          onClicked: root.addTodo()
-        }
-      }
-
-      Row {
-        width: parent.width
-        spacing: Style.space(8)
-
-        Text {
-          text: root.openOnly ? "Open only" : "All todos"
-          textFormat: Text.PlainText
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.openOnly = !root.openOnly
-          }
-        }
-
-        Text {
-          visible: root.isToday && root.carryOverCount > 0
-          text: "Carry over " + root.carryOverCount
-          textFormat: Text.PlainText
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          font.underline: true
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.carryOver()
-          }
-        }
-      }
-
-      Text {
-        width: parent.width
-        visible: root.shownTodos.length === 0
-        text: root.emptyText
-        textFormat: Text.PlainText
-        color: Qt.darker(root.foreground, 1.4)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        wrapMode: Text.WordWrap
-      }
-
-      Repeater {
-        model: root.shownTodos
-
-        delegate: RowLayout {
-          width: column.width
-          spacing: Style.space(8)
-
-          Text {
-            text: modelData.checked ? "\u2611" : "\u2610"
-            textFormat: Text.PlainText
-            color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.toggleTodo(modelData.line)
+            Text {
+              visible: root.isToday && root.carryOverCount > 0
+              text: "Carry over " + root.carryOverCount
+              textFormat: Text.PlainText
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.underline: true
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.carryOver()
+              }
             }
           }
 
           Text {
-            Layout.fillWidth: true
-            text: modelData.text
+            width: parent.width
+            visible: root.shownTodos.length === 0
+            text: root.emptyText
             textFormat: Text.PlainText
-            color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
+            color: Qt.darker(root.foreground, 1.4)
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
-            font.strikeout: modelData.checked === true
-            elide: Text.ElideRight
-            wrapMode: Text.NoWrap
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.toggleTodo(modelData.line)
+            wrapMode: Text.WordWrap
+          }
+
+          Repeater {
+            model: root.shownTodos
+
+            delegate: RowLayout {
+              width: column.width
+              spacing: Style.space(8)
+
+              // Indent nested todos by their normalized depth.
+              Item {
+                Layout.preferredWidth: (modelData.depth || 0) * Style.space(16)
+                Layout.preferredHeight: 1
+              }
+
+              Text {
+                text: modelData.checked ? "\u2611" : "\u2610"
+                textFormat: Text.PlainText
+                color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleTodo(modelData.line)
+                }
+              }
+
+              Text {
+                Layout.fillWidth: true
+                text: modelData.text
+                textFormat: Text.PlainText
+                color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.strikeout: modelData.checked === true
+                elide: Text.ElideRight
+                wrapMode: Text.NoWrap
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleTodo(modelData.line)
+                }
+              }
             }
           }
         }
