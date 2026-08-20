@@ -247,6 +247,7 @@ Panel {
               Keys.onEscapePressed: {
                 if (root.searchText !== "") {
                   root.searchText = ""
+                  inputField.forceActiveFocus()
                 } else {
                   root.close()
                 }

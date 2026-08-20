@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panel search: `/` jumps to the search field (also from the empty add-todo
   field); matching is a case-insensitive substring filter that keeps
   ancestors of matches so nested context stays readable, and combines with
-  the open-only filter. Esc clears the query, a second Esc closes the panel.
+  the open-only filter. Esc clears the query and returns focus to the add
+  field, a second Esc closes the panel.
 
 ## [1.2.1] - 2026-08-20
 
