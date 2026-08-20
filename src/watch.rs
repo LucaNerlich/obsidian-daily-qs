@@ -44,6 +44,16 @@ pub fn current_snapshot() -> Snapshot {
     }
 }
 
+pub fn snapshot_for_date(date: chrono::NaiveDate) -> Snapshot {
+    match Vault::from_env() {
+        Ok(vault) => match read_snapshot(&vault, date) {
+            Ok(snap) => snap,
+            Err(err) => Snapshot::error(err.to_string()),
+        },
+        Err(err) => Snapshot::error(err.to_string()),
+    }
+}
+
 fn snapshot_key(snap: &Snapshot) -> String {
     if let (Some(path), Some(true)) = (snap.path.as_ref(), snap.exists) {
         let mtime = fs::metadata(path)

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-20
+
+### Added
+
+- Bar label shows done/total (`☐ 2/5`).
+- Panel day navigation (previous / today / next) with the same todo UX.
+- Open-only filter in the panel (default via `openOnly` widget setting).
+- Carry over yesterday's still-open todos into today (skips duplicates).
+- Open the viewed daily note in Obsidian via `obsidian://open?path=…`.
+- Left-click opens the panel with focus in the add field (quick capture).
+
 ## [1.0.0] - 2026-08-20
 
 ### Added

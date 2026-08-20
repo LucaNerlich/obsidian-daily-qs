@@ -8,6 +8,7 @@ use chrono::NaiveDate;
 use regex::Regex;
 
 use crate::config::{DailyNotesConfig, Vault, VaultError};
+use crate::open;
 use crate::status::{Snapshot, TodoItem};
 
 fn checkbox_re() -> Regex {
@@ -42,17 +43,95 @@ pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultEr
     let path = vault.daily_note_path(&config, date)?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let path_str = path.display().to_string();
+    let todos = if path.exists() {
+        let content = fs::read_to_string(&path)
+            .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+        parse_todos(&content)
+    } else {
+        Vec::new()
+    };
+    let exists = path.exists();
+    let mut snap = Snapshot::ok(date_str, path_str, exists, todos);
+    enrich_snapshot(vault, date, &path, &mut snap)?;
+    Ok(snap)
+}
+
+fn enrich_snapshot(
+    vault: &Vault,
+    date: NaiveDate,
+    path: &Path,
+    snap: &mut Snapshot,
+) -> Result<(), VaultError> {
+    snap.obsidian_uri = Some(open::open_uri(path));
+    let today = chrono::Local::now().date_naive();
+    snap.is_today = Some(date == today);
+    let prev = date.checked_sub_days(chrono::Days::new(1)).unwrap_or(date);
+    snap.carry_over_count = Some(open_todo_count(vault, prev)?);
+    Ok(())
+}
+
+fn open_todo_count(vault: &Vault, date: NaiveDate) -> Result<usize, VaultError> {
+    let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
     if !path.exists() {
-        return Ok(Snapshot::ok(date_str, path_str, false, Vec::new()));
+        return Ok(0);
     }
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
-    Ok(Snapshot::ok(
-        date_str,
-        path_str,
-        true,
-        parse_todos(&content),
-    ))
+    Ok(parse_todos(&content).iter().filter(|t| !t.checked).count())
+}
+
+fn open_todo_texts(vault: &Vault, date: NaiveDate) -> Result<Vec<String>, VaultError> {
+    let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    Ok(parse_todos(&content)
+        .into_iter()
+        .filter(|t| !t.checked)
+        .map(|t| t.text)
+        .collect())
+}
+
+/// Copy yesterday's still-open todos into `date` (usually today).
+pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
+    let prev = date
+        .checked_sub_days(chrono::Days::new(1))
+        .ok_or_else(|| VaultError::Io("date underflow".into()))?;
+    let texts = open_todo_texts(vault, prev)?;
+    if texts.is_empty() {
+        return read_snapshot(vault, date);
+    }
+    let existing: std::collections::HashSet<String> = {
+        let snap = read_snapshot(vault, date)?;
+        snap.todos
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| !t.checked)
+            .map(|t| t.text)
+            .collect()
+    };
+    for text in texts {
+        if existing.contains(&text) {
+            continue;
+        }
+        add_todo(vault, date, &text)?;
+    }
+    read_snapshot(vault, date)
+}
+
+/// Open the daily note in Obsidian via `xdg-open`.
+pub fn open_in_obsidian(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
+    let snap = read_snapshot(vault, date)?;
+    let uri = snap
+        .obsidian_uri
+        .clone()
+        .ok_or_else(|| VaultError::Io("missing obsidian URI".into()))?;
+    open::launch(&uri)?;
+    Ok(snap)
 }
 
 /// Create today's note (and parents) if missing. Returns true when created.
@@ -331,6 +410,30 @@ mod tests {
         };
         assert!(!ensure_note(&vault, &config, &note, date).unwrap());
         assert_eq!(fs::read_to_string(&note).unwrap(), "keep\n");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_copies_open_from_previous_day() {
+        let (vault, today, _) = vault_with("- [ ] today-only\n");
+        let ynote = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&ynote, "- [ ] leftover\n- [x] finished\n").unwrap();
+        let snap = carry_over(&vault, today).unwrap();
+        let texts: Vec<_> = snap.todos.unwrap().into_iter().map(|t| t.text).collect();
+        assert!(texts.contains(&"leftover".to_string()));
+        assert!(texts.contains(&"today-only".to_string()));
+        assert!(!texts.iter().any(|t| t == "finished"));
+        // Idempotent: second carry-over does not duplicate.
+        let snap2 = carry_over(&vault, today).unwrap();
+        assert_eq!(
+            snap2
+                .todos
+                .unwrap()
+                .iter()
+                .filter(|t| t.text == "leftover")
+                .count(),
+            1
+        );
         let _ = fs::remove_dir_all(vault.root());
     }
 }

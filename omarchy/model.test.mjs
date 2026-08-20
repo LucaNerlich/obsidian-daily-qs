@@ -36,6 +36,9 @@ test("parseLine ok snapshot", () => {
       exists: true,
       openCount: 1,
       doneCount: 1,
+      carryOverCount: 2,
+      isToday: true,
+      obsidianUri: "obsidian://open?path=/vault/Daily/2026-08-20.md",
       todos: [
         { line: 3, checked: false, text: "Ship" },
         { line: 4, checked: true, text: "Done" },
@@ -44,8 +47,10 @@ test("parseLine ok snapshot", () => {
   );
   assert.equal(snap.state, "ok");
   assert.equal(snap.openCount, 1);
+  assert.equal(snap.carryOverCount, 2);
   assert.equal(snap.todos.length, 2);
   assert.equal(snap.todos[0].text, "Ship");
+  assert.match(snap.obsidianUri, /^obsidian:\/\//);
 });
 
 test("parseLine strips markup in error/text", () => {
@@ -56,11 +61,11 @@ test("parseLine strips markup in error/text", () => {
   assert.equal(snap.error, "");
 });
 
-test("labelText and tooltipText", () => {
+test("labelText done/total", () => {
   assert.equal(Model.labelText(null), "\u2610 \u2026");
   assert.equal(
     Model.labelText({ state: "ok", exists: true, openCount: 3, doneCount: 1 }),
-    "\u2610 3",
+    "\u2610 1/4",
   );
   assert.match(
     Model.tooltipText({
@@ -70,18 +75,46 @@ test("labelText and tooltipText", () => {
       doneCount: 1,
       date: "2026-08-20",
     }),
-    /2 open/,
+    /1\/3 done/,
   );
+});
+
+test("visibleTodos openOnly", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: false, text: "a" },
+      { line: 2, checked: true, text: "b" },
+    ],
+  };
+  assert.equal(Model.visibleTodos(status, false).length, 2);
+  assert.equal(Model.visibleTodos(status, true).length, 1);
+});
+
+test("shiftDate", () => {
+  assert.equal(Model.shiftDate("2026-08-20", -1), "2026-08-19");
+  assert.equal(Model.shiftDate("2026-08-20", 1), "2026-08-21");
+  assert.equal(Model.shiftDate("bad", 1), "");
 });
 
 test("emptyMessage", () => {
   assert.match(
-    Model.emptyMessage({ state: "ok", exists: false, todos: [] }),
+    Model.emptyMessage({ state: "ok", exists: false, todos: [] }, false),
     /No daily note/,
   );
   assert.match(
-    Model.emptyMessage({ state: "ok", exists: true, todos: [] }),
+    Model.emptyMessage({ state: "ok", exists: true, todos: [] }, false),
     /No todos/,
+  );
+  assert.match(
+    Model.emptyMessage(
+      {
+        state: "ok",
+        exists: true,
+        todos: [{ line: 1, checked: true, text: "x" }],
+      },
+      true,
+    ),
+    /No open/,
   );
 });
 

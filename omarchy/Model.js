@@ -28,6 +28,9 @@ function parseLine(line) {
       openCount: 0,
       doneCount: 0,
       todos: [],
+      obsidianUri: "",
+      carryOverCount: 0,
+      isToday: false,
       error: safeText(parsed.error)
     };
   }
@@ -53,6 +56,9 @@ function parseLine(line) {
   var doneCount = typeof parsed.doneCount === "number" && isFinite(parsed.doneCount)
     ? Math.max(0, Math.floor(parsed.doneCount))
     : todos.filter(function(t) { return t.checked; }).length;
+  var carryOverCount = typeof parsed.carryOverCount === "number" && isFinite(parsed.carryOverCount)
+    ? Math.max(0, Math.floor(parsed.carryOverCount))
+    : 0;
 
   return {
     state: "ok",
@@ -62,6 +68,9 @@ function parseLine(line) {
     openCount: openCount,
     doneCount: doneCount,
     todos: todos,
+    obsidianUri: safeUri(parsed.obsidianUri),
+    carryOverCount: carryOverCount,
+    isToday: parsed.isToday === true,
     error: ""
   };
 }
@@ -77,11 +86,20 @@ function safeText(value) {
   return value;
 }
 
+function safeUri(value) {
+  if (typeof value !== "string") return "";
+  if (value.indexOf("obsidian://") !== 0) return "";
+  if (value.indexOf("<") !== -1 || value.indexOf(">") !== -1 || value.indexOf('"') !== -1)
+    return "";
+  return value;
+}
+
 function labelText(status) {
   if (!status) return "\u2610 \u2026";
   if (status.state === "error") return "\u2610 !";
   if (!status.exists) return "\u2610 ·";
-  return "\u2610 " + String(status.openCount);
+  var total = status.doneCount + status.openCount;
+  return "\u2610 " + String(status.doneCount) + "/" + String(total);
 }
 
 function tooltipText(status) {
@@ -91,20 +109,54 @@ function tooltipText(status) {
   }
   var date = status.date || "today";
   if (!status.exists) return "Obsidian Daily — no note for " + date;
-  return "Obsidian Daily — " + status.openCount + " open, " + status.doneCount + " done (" + date + ")";
+  return "Obsidian Daily — " + status.doneCount + "/" + (status.doneCount + status.openCount)
+    + " done (" + date + ")";
 }
 
 function metaLine(status) {
   if (!status) return "";
   if (status.state === "error") return status.error || "Error";
   if (!status.exists) return "No daily note yet";
-  return status.openCount + " open · " + status.doneCount + " done";
+  return status.doneCount + "/" + (status.doneCount + status.openCount)
+    + " done · " + status.openCount + " open";
 }
 
-function emptyMessage(status) {
+function emptyMessage(status, openOnly) {
   if (!status) return "Loading…";
   if (status.state === "error") return status.error || "Unable to read vault";
-  if (!status.exists) return "No daily note for today. Add a todo to create it.";
-  if (!status.todos || status.todos.length === 0) return "No todos in today's note.";
+  if (!status.exists) return "No daily note for this day. Add a todo to create it.";
+  if (!status.todos || status.todos.length === 0) return "No todos in this note.";
+  if (openOnly) {
+    var open = status.todos.filter(function(t) { return !t.checked; });
+    if (open.length === 0) return "No open todos.";
+  }
   return "";
+}
+
+function visibleTodos(status, openOnly) {
+  if (!status || !status.todos) return [];
+  if (!openOnly) return status.todos;
+  return status.todos.filter(function(t) { return !t.checked; });
+}
+
+/** Shift YYYY-MM-DD by delta days. Returns "" on invalid input. */
+function shiftDate(dateStr, deltaDays) {
+  var text = String(dateStr || "");
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!m) return "";
+  var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (isNaN(d.getTime())) return "";
+  d.setUTCDate(d.getUTCDate() + Number(deltaDays));
+  var y = d.getUTCFullYear();
+  var mo = d.getUTCMonth() + 1;
+  var day = d.getUTCDate();
+  return y + "-" + (mo < 10 ? "0" : "") + mo + "-" + (day < 10 ? "0" : "") + day;
+}
+
+function todayIso() {
+  var d = new Date();
+  var y = d.getFullYear();
+  var mo = d.getMonth() + 1;
+  var day = d.getDate();
+  return y + "-" + (mo < 10 ? "0" : "") + mo + "-" + (day < 10 ? "0" : "") + day;
 }

@@ -6,7 +6,7 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Native Quattro popup for today's Obsidian daily note todos.
+// Native Quattro popup for Obsidian daily note todos (day-switchable).
 Panel {
   id: root
   moduleName: "luca.obsidian-daily"
@@ -22,13 +22,17 @@ Panel {
   readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-  readonly property string statusState: hasWatcher ? String(watcher.statusState || "ok") : "ok"
-  readonly property string date: hasWatcher ? String(watcher.date || "") : ""
-  readonly property bool exists: hasWatcher ? watcher.exists === true : false
-  readonly property int openCount: hasWatcher ? Number(watcher.openCount || 0) : 0
-  readonly property int doneCount: hasWatcher ? Number(watcher.doneCount || 0) : 0
-  readonly property var todos: hasWatcher ? (watcher.todos || []) : []
-  readonly property string error: hasWatcher ? String(watcher.error || "") : ""
+  property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
+
+  readonly property string statusState: hasWatcher ? String(watcher.viewStatusState || "ok") : "ok"
+  readonly property string date: hasWatcher ? String(watcher.viewDate || "") : ""
+  readonly property bool exists: hasWatcher ? watcher.viewExists === true : false
+  readonly property int openCount: hasWatcher ? Number(watcher.viewOpenCount || 0) : 0
+  readonly property int doneCount: hasWatcher ? Number(watcher.viewDoneCount || 0) : 0
+  readonly property var todos: hasWatcher ? (watcher.viewTodos || []) : []
+  readonly property string error: hasWatcher ? String(watcher.viewError || "") : ""
+  readonly property int carryOverCount: hasWatcher ? Number(watcher.viewCarryOverCount || 0) : 0
+  readonly property bool isToday: hasWatcher ? watcher.viewIsToday === true : true
 
   readonly property var status: ({
     state: root.statusState,
@@ -37,10 +41,17 @@ Panel {
     openCount: root.openCount,
     doneCount: root.doneCount,
     todos: root.todos,
-    error: root.error
+    error: root.error,
+    carryOverCount: root.carryOverCount,
+    isToday: root.isToday
   })
   readonly property string metaText: Model.metaLine(status)
-  readonly property string emptyText: Model.emptyMessage(status)
+  readonly property var shownTodos: Model.visibleTodos(status, root.openOnly)
+  readonly property string emptyText: Model.emptyMessage(status, root.openOnly)
+
+  function focusCapture() {
+    inputField.forceActiveFocus()
+  }
 
   function addTodo() {
     if (!hasWatcher || typeof watcher.addTodo !== "function") return
@@ -53,10 +64,35 @@ Panel {
     watcher.toggleTodo(line)
   }
 
+  function shiftDay(delta) {
+    if (!hasWatcher || typeof watcher.shiftView !== "function") return
+    watcher.shiftView(delta)
+  }
+
+  function goToday() {
+    if (!hasWatcher || typeof watcher.goToday !== "function") return
+    watcher.goToday()
+  }
+
+  function carryOver() {
+    if (!hasWatcher || typeof watcher.carryOver !== "function") return
+    watcher.carryOver()
+  }
+
+  function openInObsidian() {
+    if (!hasWatcher || typeof watcher.openInObsidian !== "function") return
+    watcher.openInObsidian()
+  }
+
   function switchPanel(direction) {
     if (root.bar && typeof root.bar.switchPanelFrom === "function")
       return root.bar.switchPanelFrom(root.barIdentity, direction)
     return false
+  }
+
+  onOpenedChanged: {
+    if (root.opened)
+      Qt.callLater(root.focusCapture)
   }
 
   KeyboardPanel {
@@ -66,8 +102,8 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(360))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(560))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -85,16 +121,56 @@ Panel {
         width: parent.width
         title: "Obsidian Daily"
         meta: root.metaText
-        detail: root.date !== "" ? root.date : "Today's daily note"
+        detail: root.date !== "" ? root.date : "Daily note"
         foreground: root.foreground
         fontFamily: root.fontFamily
 
         iconComponent: Component {
           Text {
             text: "\u2610"
+            textFormat: Text.PlainText
             color: root.statusState === "error" ? root.urgent : root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.display
+          }
+        }
+
+        trailingControl: Component {
+          Row {
+            spacing: Style.space(4)
+
+            PanelActionButton {
+              iconText: "\u25C0"
+              tooltipText: "Previous day"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.shiftDay(-1)
+            }
+
+            PanelActionButton {
+              iconText: "\u25CF"
+              tooltipText: "Today"
+              visible: !root.isToday
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.goToday()
+            }
+
+            PanelActionButton {
+              iconText: "\u25B6"
+              tooltipText: "Next day"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.shiftDay(1)
+            }
+
+            PanelActionButton {
+              iconText: "\u2398"
+              tooltipText: "Open in Obsidian"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.openInObsidian()
+            }
           }
         }
       }
@@ -123,9 +199,42 @@ Panel {
         }
       }
 
+      Row {
+        width: parent.width
+        spacing: Style.space(8)
+
+        Text {
+          text: root.openOnly ? "Open only" : "All todos"
+          textFormat: Text.PlainText
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openOnly = !root.openOnly
+          }
+        }
+
+        Text {
+          visible: root.isToday && root.carryOverCount > 0
+          text: "Carry over " + root.carryOverCount
+          textFormat: Text.PlainText
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.underline: true
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.carryOver()
+          }
+        }
+      }
+
       Text {
         width: parent.width
-        visible: root.todos.length === 0
+        visible: root.shownTodos.length === 0
         text: root.emptyText
         textFormat: Text.PlainText
         color: Qt.darker(root.foreground, 1.4)
@@ -135,7 +244,7 @@ Panel {
       }
 
       Repeater {
-        model: root.todos
+        model: root.shownTodos
 
         delegate: RowLayout {
           width: column.width

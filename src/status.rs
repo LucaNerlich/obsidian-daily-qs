@@ -32,6 +32,14 @@ pub struct Snapshot {
     pub done_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub todos: Option<Vec<TodoItem>>,
+    /// Absolute `obsidian://open?path=…` URI for the daily note path.
+    #[serde(rename = "obsidianUri", skip_serializing_if = "Option::is_none")]
+    pub obsidian_uri: Option<String>,
+    /// Open todos on the previous calendar day (for carry-over UI).
+    #[serde(rename = "carryOverCount", skip_serializing_if = "Option::is_none")]
+    pub carry_over_count: Option<usize>,
+    #[serde(rename = "isToday", skip_serializing_if = "Option::is_none")]
+    pub is_today: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -46,6 +54,9 @@ impl Snapshot {
             open_count: None,
             done_count: None,
             todos: None,
+            obsidian_uri: None,
+            carry_over_count: None,
+            is_today: None,
             error: Some(message.into()),
         }
     }
@@ -61,6 +72,9 @@ impl Snapshot {
             open_count: Some(open_count),
             done_count: Some(done_count),
             todos: Some(todos),
+            obsidian_uri: None,
+            carry_over_count: None,
+            is_today: None,
             error: None,
         }
     }

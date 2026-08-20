@@ -34,6 +34,7 @@ BarWidget {
   readonly property var panelItem: panelLoader.item
   readonly property bool opened: panelItem ? panelItem.opened === true : false
 
+  // Today (bar label) — always fed by `watch`.
   property string statusState: "ok"
   property string date: ""
   property string path: ""
@@ -42,6 +43,24 @@ BarWidget {
   property int doneCount: 0
   property var todos: []
   property string error: ""
+  property string obsidianUri: ""
+  property int carryOverCount: 0
+  property bool isToday: true
+
+  // Panel view (may differ from today when day-switching).
+  property string viewDate: ""
+  property string viewStatusState: "ok"
+  property string viewPath: ""
+  property bool viewExists: false
+  property int viewOpenCount: 0
+  property int viewDoneCount: 0
+  property var viewTodos: []
+  property string viewError: ""
+  property string viewObsidianUri: ""
+  property int viewCarryOverCount: 0
+  property bool viewIsToday: true
+
+  readonly property bool openOnlyDefault: setting("openOnly", false) === true
 
   readonly property var status: ({
     state: root.statusState,
@@ -51,17 +70,33 @@ BarWidget {
     openCount: root.openCount,
     doneCount: root.doneCount,
     todos: root.todos,
-    error: root.error
+    error: root.error,
+    obsidianUri: root.obsidianUri,
+    carryOverCount: root.carryOverCount,
+    isToday: root.isToday
   })
   readonly property string labelText: Model.labelText(status)
   readonly property string tooltipText: Model.tooltipText(status)
   readonly property color urgent: bar ? bar.urgent : Color.urgent
 
-  function open() { if (panelItem) panelItem.open() }
+  function open() {
+    if (!panelItem) return
+    if (root.viewDate === "") root.viewDate = Model.todayIso()
+    root.refreshView()
+    panelItem.open()
+    Qt.callLater(function() {
+      if (panelItem && typeof panelItem.focusCapture === "function")
+        panelItem.focusCapture()
+    })
+  }
   function close() { if (panelItem) panelItem.close() }
-  function toggle() { if (panelItem) panelItem.toggle() }
+  function toggle() {
+    if (!panelItem) return
+    if (panelItem.opened === true) root.close()
+    else root.open()
+  }
 
-  function applyLine(line) {
+  function applyTodayLine(line) {
     var parsed = Model.parseLine(String(line || ""))
     if (!parsed) return
     root.statusState = parsed.state
@@ -72,6 +107,30 @@ BarWidget {
     root.doneCount = parsed.doneCount
     root.todos = parsed.todos || []
     root.error = parsed.error || ""
+    root.obsidianUri = parsed.obsidianUri || ""
+    root.carryOverCount = parsed.carryOverCount || 0
+    root.isToday = parsed.isToday === true
+    if (root.viewDate === "" || root.viewDate === parsed.date)
+      root.applyViewParsed(parsed)
+  }
+
+  function applyViewParsed(parsed) {
+    if (!parsed) return
+    root.viewStatusState = parsed.state
+    root.viewDate = parsed.date || root.viewDate
+    root.viewPath = parsed.path
+    root.viewExists = parsed.exists === true
+    root.viewOpenCount = parsed.openCount
+    root.viewDoneCount = parsed.doneCount
+    root.viewTodos = parsed.todos || []
+    root.viewError = parsed.error || ""
+    root.viewObsidianUri = parsed.obsidianUri || ""
+    root.viewCarryOverCount = parsed.carryOverCount || 0
+    root.viewIsToday = parsed.isToday === true
+  }
+
+  function applyViewLine(line) {
+    root.applyViewParsed(Model.parseLine(String(line || "")))
   }
 
   function clearStatus() {
@@ -83,6 +142,9 @@ BarWidget {
     root.doneCount = 0
     root.todos = []
     root.error = ""
+    root.obsidianUri = ""
+    root.carryOverCount = 0
+    root.isToday = true
   }
 
   function runAction(args) {
@@ -94,16 +156,46 @@ BarWidget {
     actionProc.running = true
   }
 
+  function refreshView() {
+    var d = root.viewDate || Model.todayIso()
+    root.viewDate = d
+    root.runAction(["status", "--date", d])
+  }
+
+  function shiftView(delta) {
+    var next = Model.shiftDate(root.viewDate || Model.todayIso(), delta)
+    if (next === "") return
+    root.viewDate = next
+    root.refreshView()
+  }
+
+  function goToday() {
+    root.viewDate = Model.todayIso()
+    root.refreshView()
+  }
+
   function addTodo(text) {
     var trimmed = String(text || "").trim()
     if (trimmed === "") return
-    root.runAction(["add", "--text", trimmed])
+    var d = root.viewDate || Model.todayIso()
+    root.runAction(["add", "--date", d, "--text", trimmed])
   }
 
   function toggleTodo(line) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
-    root.runAction(["toggle", "--line", String(Math.floor(n))])
+    var d = root.viewDate || Model.todayIso()
+    root.runAction(["toggle", "--date", d, "--line", String(Math.floor(n))])
+  }
+
+  function carryOver() {
+    var d = root.viewDate || Model.todayIso()
+    root.runAction(["carry-over", "--date", d])
+  }
+
+  function openInObsidian() {
+    var d = root.viewDate || Model.todayIso()
+    root.runAction(["open", "--date", d])
   }
 
   function injectPanel() {
@@ -121,7 +213,10 @@ BarWidget {
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
 
-  Component.onCompleted: watchProc.running = true
+  Component.onCompleted: {
+    root.viewDate = Model.todayIso()
+    watchProc.running = true
+  }
 
   Loader {
     id: panelLoader
@@ -139,7 +234,7 @@ BarWidget {
     command: [root.watchBinary, "watch"]
     property bool startedOnce: false
     stdout: SplitParser {
-      onRead: function(line) { root.applyLine(line) }
+      onRead: function(line) { root.applyTodayLine(line) }
     }
     onStarted: {
       watchProc.startedOnce = true
@@ -177,7 +272,14 @@ BarWidget {
     property bool startedOnce: false
     property bool retried: false
     stdout: SplitParser {
-      onRead: function(line) { root.applyLine(line) }
+      onRead: function(line) {
+        // Mutations and status --date refresh the panel view.
+        root.applyViewLine(line)
+        var parsed = Model.parseLine(String(line || ""))
+        // Keep the bar in sync when the action targeted today.
+        if (parsed && parsed.date && parsed.date === Model.todayIso())
+          root.applyTodayLine(line)
+      }
     }
     onStarted: {
       actionProc.startedOnce = true

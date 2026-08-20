@@ -40,18 +40,32 @@ Ensure `OBSIDIAN_VAULT_ROOT` is available to the Omarchy shell (e.g. in `~/.conf
 
 ## Usage
 
-- **Bar**: shows open todo count (`☐ 3`). Left-click opens/closes the panel.
-- **Panel**: lists today's checkboxes; click a row to toggle; type and press Enter (or `+`) to add. New items go under `## Tasks` when that heading exists, otherwise at the end of the note. Adding creates today's note (from the configured template when present).
+- **Bar**: shows done/total for today (`☐ 2/5`). Left-click opens the panel with focus in the add field.
+- **Panel**:
+  - List todos; click a row to toggle.
+  - Add with Enter / `+`.
+  - **Open only** / **All todos** toggles completed visibility (default from `openOnly` setting).
+  - **◀ / ● / ▶** move to previous day, today, or next day.
+  - **Carry over N** (when viewing today) copies yesterday's still-open todos.
+  - Open-in-Obsidian launches `obsidian://open?path=…` via `xdg-open`.
 - **Shell**: `omarchy-shell shell summon luca.obsidian-daily '{}'` / `omarchy-shell shell hide luca.obsidian-daily`.
+
+```bash
+omarchy bar set luca.obsidian-daily openOnly true
+```
 
 ## CLI
 
 ```bash
 export OBSIDIAN_VAULT_ROOT="/path/to/vault"
 obsidian-daily-qs status
+obsidian-daily-qs status --date 2026-08-19
 obsidian-daily-qs watch
 obsidian-daily-qs add --text "Ship plugin"
+obsidian-daily-qs add --date 2026-08-19 --text "Backfill"
 obsidian-daily-qs toggle --line 12
+obsidian-daily-qs carry-over
+obsidian-daily-qs open
 ```
 
 ## Development

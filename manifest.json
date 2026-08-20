@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "luca.obsidian-daily",
   "name": "Obsidian Daily",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Luca Nerlich",
   "license": "Apache-2.0",
-  "description": "View and manage today's Obsidian daily note todos from the Omarchy bar. Requires OBSIDIAN_VAULT_ROOT.",
+  "description": "View and manage Obsidian daily note todos from the Omarchy bar. Requires OBSIDIAN_VAULT_ROOT.",
   "kinds": ["bar-widget"],
   "activation": "on-demand",
   "entryPoints": {
@@ -13,9 +13,21 @@
   },
   "barWidget": {
     "displayName": "Obsidian Daily",
-    "description": "Shows today's open daily-note todos and opens a panel to check and add items.",
+    "description": "Shows today's done/total daily-note todos and opens a panel to check, add, and carry over items.",
     "category": "Productivity",
     "allowMultiple": false,
-    "defaultSection": "right"
+    "defaultSection": "right",
+    "defaults": {
+      "openOnly": false
+    },
+    "schema": [
+      {
+        "key": "openOnly",
+        "type": "boolean",
+        "label": "Open todos only",
+        "description": "When the panel opens, hide completed checkboxes by default. Can still be toggled in the panel.",
+        "defaultValue": false
+      }
+    ]
   }
 }
