@@ -23,6 +23,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
+  property string searchText: ""
 
   readonly property string statusState: hasWatcher ? String(watcher.viewStatusState || "ok") : "ok"
   readonly property string date: hasWatcher ? String(watcher.viewDate || "") : ""
@@ -46,8 +47,8 @@ Panel {
     isToday: root.isToday
   })
   readonly property string metaText: Model.metaLine(status)
-  readonly property var shownTodos: Model.visibleTodos(status, root.openOnly)
-  readonly property string emptyText: Model.emptyMessage(status, root.openOnly)
+  readonly property var shownTodos: Model.visibleTodos(status, root.openOnly, root.searchText)
+  readonly property string emptyText: Model.emptyMessage(status, root.openOnly, root.searchText)
 
   function focusCapture() {
     inputField.forceActiveFocus()
@@ -108,11 +109,15 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      // While the input field has focus, keys (arrows, backspace, …) belong
-      // to the editor. Otherwise Up/Down/j/k scroll the todo list.
-      blocked: inputField.activeFocus
+      // While an input field has focus, keys (arrows, backspace, …) belong
+      // to the editor. Otherwise Up/Down/j/k scroll the todo list and `/`
+      // jumps to the search field.
+      blocked: inputField.activeFocus || searchField.activeFocus
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(t) {
+        if (t === "/") searchField.forceActiveFocus()
+      }
       onMoveRequested: function(dx, dy) {
         if (dy === 0) return
         panelFlick.contentY = Math.max(0, Math.min(
@@ -215,6 +220,41 @@ Panel {
               foreground: root.foreground
               fontFamily: root.fontFamily
               onClicked: root.addTodo()
+            }
+          }
+
+          RowLayout {
+            width: parent.width
+            spacing: Style.space(6)
+
+            TextField {
+              id: searchField
+              Layout.fillWidth: true
+              placeholderText: "Search todos… ( / )"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              text: root.searchText
+              onTextEdited: root.searchText = searchField.text
+              Keys.onEscapePressed: {
+                if (root.searchText !== "") {
+                  root.searchText = ""
+                } else {
+                  root.close()
+                }
+              }
+            }
+
+            PanelActionButton {
+              visible: root.searchText !== ""
+              iconText: "\u2715"
+              tooltipText: "Clear search"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: {
+                root.searchText = ""
+                searchField.forceActiveFocus()
+              }
             }
           }
 

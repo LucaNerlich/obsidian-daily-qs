@@ -167,6 +167,35 @@ test("visibleTodos openOnly walks the full ancestor chain", () => {
   assert.deepEqual(visible.map((t) => t.text), ["root", "mid", "leaf"]);
 });
 
+test("visibleTodos search is case-insensitive and keeps ancestors", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: true, text: "Preorders", depth: 0, parentLine: null },
+      { line: 2, checked: true, text: "Silent Hill Townfall", depth: 1, parentLine: 1 },
+      { line: 3, checked: false, text: "Buy milk", depth: 0, parentLine: null },
+    ],
+  };
+  const visible = Model.visibleTodos(status, false, "hill");
+  assert.deepEqual(visible.map((t) => t.text), ["Preorders", "Silent Hill Townfall"]);
+  assert.deepEqual(Model.visibleTodos(status, false, "HILL").length, 2);
+  assert.deepEqual(Model.visibleTodos(status, false, "milk").map((t) => t.text), ["Buy milk"]);
+  assert.deepEqual(Model.visibleTodos(status, false, ""), status.todos);
+});
+
+test("visibleTodos combines search and openOnly", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: false, text: "parent", depth: 0, parentLine: null },
+      { line: 2, checked: false, text: "child alpha", depth: 1, parentLine: 1 },
+      { line: 3, checked: true, text: "done alpha", depth: 0, parentLine: null },
+      { line: 4, checked: false, text: "child beta", depth: 1, parentLine: 1 },
+    ],
+  };
+  const visible = Model.visibleTodos(status, true, "alpha");
+  // openOnly hides "done alpha", but "child alpha" matches and stays.
+  assert.deepEqual(visible.map((t) => t.text), ["parent", "child alpha"]);
+});
+
 test("shiftDate", () => {
   assert.equal(Model.shiftDate("2026-08-20", -1), "2026-08-19");
   assert.equal(Model.shiftDate("2026-08-20", 1), "2026-08-21");
@@ -192,6 +221,14 @@ test("emptyMessage", () => {
       true,
     ),
     /No open/,
+  );
+  assert.match(
+    Model.emptyMessage(
+      { state: "ok", exists: true, todos: [{ line: 1, checked: false, text: "x" }] },
+      false,
+      "zzz",
+    ),
+    /No todos match "zzz"/,
   );
 });
 

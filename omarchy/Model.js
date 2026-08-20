@@ -137,11 +137,13 @@ function metaLine(status) {
     + " done · " + status.openCount + " open";
 }
 
-function emptyMessage(status, openOnly) {
+function emptyMessage(status, openOnly, query) {
   if (!status) return "Loading…";
   if (status.state === "error") return status.error || "Unable to read vault";
   if (!status.exists) return "No daily note for this day. Add a todo to create it.";
   if (!status.todos || status.todos.length === 0) return "No todos in this note.";
+  var q = String(query || "").trim();
+  if (q !== "") return "No todos match \"" + q + "\".";
   if (openOnly) {
     var open = status.todos.filter(function(t) { return !t.checked; });
     if (open.length === 0) return "No open todos.";
@@ -150,30 +152,37 @@ function emptyMessage(status, openOnly) {
 }
 
 /**
- * Todos to show for the current openOnly setting.
+ * Todos to show for the current filters (openOnly + text query).
  *
- * Nested lists keep the tree readable: when openOnly is on, an open child
- * pulls its (possibly checked) ancestors in so it doesn't float alone, and
- * a checked parent with open descendants stays visible as their anchor.
+ * An item is shown when it passes the filters, plus its (possibly checked)
+ * ancestors so nested context stays readable — a checked parent with a
+ * matching or open descendant stays visible as their anchor. The query is a
+ * case-insensitive substring match on the todo text.
  */
-function visibleTodos(status, openOnly) {
+function visibleTodos(status, openOnly, query) {
   if (!status || !status.todos) return [];
-  if (!openOnly) return status.todos;
 
   var todos = status.todos;
+  var q = String(query || "").trim().toLowerCase();
+  if (!openOnly && q === "") return todos;
+
   var byLine = {};
   for (var i = 0; i < todos.length; i++) byLine[todos[i].line] = todos[i];
 
   var keep = {};
+  function keepChain(line) {
+    while (line && byLine[line]) {
+      if (keep[line] === true) return; // ancestor chain already kept
+      keep[line] = true;
+      line = byLine[line].parentLine;
+    }
+  }
+
   for (var j = 0; j < todos.length; j++) {
     var todo = todos[j];
-    if (todo.checked) continue;
-    keep[todo.line] = true;
-    var parent = todo.parentLine;
-    while (parent && byLine[parent]) {
-      keep[parent] = true;
-      parent = byLine[parent].parentLine;
-    }
+    if (openOnly && todo.checked) continue;
+    if (q !== "" && todo.text.toLowerCase().indexOf(q) === -1) continue;
+    keepChain(todo.line);
   }
 
   return todos.filter(function(t) { return keep[t.line] === true; });

@@ -66,6 +66,7 @@ Setting both keeps the current session working until the next login. Use `pgrep 
   - List todos; click a row to toggle.
   - Nested todos (indented with tabs or two spaces per level in the note) render indented; the open-only filter keeps parents of open items visible.
   - Scrolls vertically with the mouse wheel, scrollbar, or Up/Down/j/k (when not typing in the add field).
+  - Search: `/` focuses the search field; matches filter the list (ancestors stay visible) and combine with open-only. Esc clears, second Esc closes.
   - Add with Enter / `+`.
   - **Open only** / **All todos** toggles completed visibility (default from `openOnly` setting).
   - **◀ / ● / ▶** move to previous day, today, or next day.
