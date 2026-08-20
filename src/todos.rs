@@ -96,6 +96,9 @@ pub fn add_todo(vault: &Vault, date: NaiveDate, text: &str) -> Result<Snapshot, 
     if text.is_empty() {
         return Err(VaultError::Io("todo text is empty".into()));
     }
+    if text.contains('\n') || text.contains('\r') {
+        return Err(VaultError::Io("todo text must be a single line".into()));
+    }
     let config = vault.daily_notes_config()?;
     let path = vault.daily_note_path(&config, date)?;
     ensure_note(vault, &config, &path, date)?;

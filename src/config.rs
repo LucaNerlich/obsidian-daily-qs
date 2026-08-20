@@ -96,11 +96,13 @@ impl Vault {
         let parsed: DailyNotesJson = serde_json::from_str(&raw)
             .map_err(|e| VaultError::Io(format!("failed to parse {}: {e}", path.display())))?;
         Ok(DailyNotesConfig {
-            folder: parsed
-                .folder
-                .map(|s| s.trim().trim_matches('/').to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_default(),
+            folder: sanitize_rel(
+                parsed
+                    .folder
+                    .map(|s| s.trim().trim_matches('/').to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_default(),
+            ),
             format: parsed
                 .format
                 .map(|s| s.trim().to_string())
@@ -109,6 +111,8 @@ impl Vault {
             template: parsed
                 .template
                 .map(|s| s.trim().trim_end_matches(".md").to_string())
+                .filter(|s| !s.is_empty())
+                .map(sanitize_rel)
                 .filter(|s| !s.is_empty()),
         })
     }
@@ -122,33 +126,73 @@ impl Vault {
             format::format_moment(&config.format, date).map_err(VaultError::BadFormat)?;
         let mut path = self.root.clone();
         if !config.folder.is_empty() {
-            path.push(&config.folder);
+            for part in config.folder.split('/') {
+                push_safe_component(&mut path, part)?;
+            }
         }
         // Format may include `/` for year/month subfolders.
         for part in relative.split('/') {
-            if part.is_empty() || part == "." || part == ".." {
-                continue;
-            }
-            path.push(part);
+            push_safe_component(&mut path, part)?;
         }
         if path.extension().is_none() {
             path.set_extension("md");
         }
+        ensure_under_root(&self.root, &path)?;
         Ok(path)
     }
 
     pub fn template_path(&self, config: &DailyNotesConfig) -> Option<PathBuf> {
         let rel = config.template.as_ref()?;
-        let mut path = self.root.join(rel);
+        let mut path = self.root.clone();
+        for part in rel.split('/') {
+            push_safe_component(&mut path, part).ok()?;
+        }
         if path.extension().is_none() {
             path.set_extension("md");
         }
+        ensure_under_root(&self.root, &path).ok()?;
         Some(path)
     }
 
     pub fn root(&self) -> &Path {
         &self.root
     }
+}
+
+/// Drop empty / `.` / `..` path segments so settings cannot escape the vault.
+fn sanitize_rel(value: String) -> String {
+    value
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != "." && *p != "..")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn push_safe_component(path: &mut PathBuf, part: &str) -> Result<(), VaultError> {
+    if part.is_empty() || part == "." {
+        return Ok(());
+    }
+    if part == ".." || part.contains('\0') {
+        return Err(VaultError::Io(format!(
+            "refusing path component that escapes the vault: {part:?}"
+        )));
+    }
+    path.push(part);
+    Ok(())
+}
+
+fn ensure_under_root(root: &Path, path: &Path) -> Result<(), VaultError> {
+    // Lexical only: we build paths from the vault root with `..` rejected, so
+    // a component-wise prefix check is enough. Avoid canonicalize() — on macOS
+    // `/var` vs `/private/var` would reject in-vault create paths that do not
+    // exist yet.
+    if path.starts_with(root) {
+        return Ok(());
+    }
+    Err(VaultError::Io(format!(
+        "resolved path escapes vault root: {}",
+        path.display()
+    )))
 }
 
 #[cfg(test)]
@@ -208,6 +252,24 @@ mod tests {
                 .join("08")
                 .join("2026-08-20.md")
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strips_parent_dir_segments_from_folder() {
+        let root = tmp_vault("escape");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"../outside","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let cfg = vault.daily_notes_config().unwrap();
+        assert_eq!(cfg.folder, "outside");
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let path = vault.daily_note_path(&cfg, date).unwrap();
+        assert!(path.starts_with(&root));
+        assert_eq!(path, root.join("outside").join("2026-08-20.md"));
         let _ = fs::remove_dir_all(root);
     }
 }

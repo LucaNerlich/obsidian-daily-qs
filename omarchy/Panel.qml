@@ -127,6 +127,7 @@ Panel {
         width: parent.width
         visible: root.todos.length === 0
         text: root.emptyText
+        textFormat: Text.PlainText
         color: Qt.darker(root.foreground, 1.4)
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -142,6 +143,7 @@ Panel {
 
           Text {
             text: modelData.checked ? "\u2611" : "\u2610"
+            textFormat: Text.PlainText
             color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -155,6 +157,7 @@ Panel {
           Text {
             Layout.fillWidth: true
             text: modelData.text
+            textFormat: Text.PlainText
             color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body

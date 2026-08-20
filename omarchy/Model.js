@@ -66,6 +66,10 @@ function parseLine(line) {
   };
 }
 
+// Qt Text defaults can treat a string that looks like HTML as rich text
+// (Text.AutoText). JSON from the helper (and PATH-fallback binary) is
+// untrusted from QML's point of view, so drop markup rather than let it
+// reach PanelHero / Text. Pair with textFormat: Text.PlainText in QML.
 function safeText(value) {
   if (typeof value !== "string") return "";
   if (value.indexOf("<") !== -1 || value.indexOf(">") !== -1 || value.indexOf("&") !== -1)

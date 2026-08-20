@@ -1,0 +1,41 @@
+name: Refresh marketplace bundle
+
+# Builds omarchy/bin on ubuntu-latest (same host as verify-bundle) and uploads
+# the ELF + hash + srcid as an artifact for commit. Does not push.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: build musl bundle artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: x86_64-unknown-linux-musl
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: refresh-bundle-musl
+
+      - name: Build bundle
+        run: scripts/build-bundle.sh
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: omarchy-bin
+          path: |
+            omarchy/bin/obsidian-daily-qs
+            omarchy/bin/obsidian-daily-qs.sha256
+            omarchy/bin/obsidian-daily-qs.srcid

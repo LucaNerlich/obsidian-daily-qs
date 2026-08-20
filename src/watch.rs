@@ -20,7 +20,11 @@ pub fn watch() {
         let snap = current_snapshot();
         let key = snapshot_key(&snap);
         if last_key.as_ref() != Some(&key) {
-            emit(&snap);
+            if !emit(&snap) {
+                // Consumer is gone (shell crashed or exited without reaping
+                // us); keep polling would leak this process.
+                return;
+            }
             last_key = Some(key);
         }
         thread::sleep(POLL);
@@ -55,9 +59,11 @@ fn snapshot_key(snap: &Snapshot) -> String {
     }
 }
 
-fn emit(snap: &Snapshot) {
+/// Returns false when stdout is broken (EPIPE), so callers can exit.
+fn emit(snap: &Snapshot) -> bool {
     let line = serde_json::to_string(snap).expect("snapshot serializes");
     let mut out = io::stdout().lock();
-    let _ = writeln!(out, "{line}");
-    let _ = out.flush();
+    let mut broken = writeln!(out, "{line}").is_err();
+    broken |= out.flush().is_err();
+    !broken
 }
