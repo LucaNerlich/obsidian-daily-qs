@@ -50,7 +50,7 @@ function parseLine(line) {
       todos.push({
         line: Math.floor(lineNo),
         checked: item.checked === true,
-        text: safeText(item.text),
+        text: safeTodoText(item.text),
         depth: Math.min(32, Math.floor(depth)),
         parentLine: parentLine
       });
@@ -91,6 +91,15 @@ function safeText(value) {
   if (value.indexOf("<") !== -1 || value.indexOf(">") !== -1 || value.indexOf("&") !== -1)
     return "";
   return value;
+}
+
+// Todo text is only ever rendered with textFormat: Text.PlainText (todo rows
+// in Panel.qml), so markup is inert there. Strip control characters that
+// would break the single-line row, but keep everything else — URLs with `&`,
+// `<3` emoticons, and `->` arrows all survive.
+function safeTodoText(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001f\u007f]/g, "");
 }
 
 function safeUri(value) {

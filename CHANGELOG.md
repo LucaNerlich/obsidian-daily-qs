@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Todo text containing `&`, `<`, or `>` (e.g. `Team & Agile Meetings`) was
+  dropped entirely and rendered as an empty checkbox. Todo rows are always
+  `PlainText`, so such text is now kept (only control characters are
+  stripped); error strings remain strictly sanitized.
+
 ## [1.2.0] - 2026-08-20
 
 ### Added

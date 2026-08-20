@@ -96,6 +96,21 @@ test("parseLine strips markup in error/text", () => {
   assert.equal(snap.error, "");
 });
 
+test("parseLine keeps todo text with markup characters", () => {
+  const snap = Model.parseLine(
+    JSON.stringify({
+      state: "ok",
+      todos: [
+        { line: 1, checked: false, text: "Team & Agile Meetings <3 -> done" },
+        { line: 2, checked: false, text: "tab\tand\nnewline" },
+      ],
+    }),
+  );
+  assert.equal(snap.todos[0].text, "Team & Agile Meetings <3 -> done");
+  // Control characters that would break the single-line row are stripped.
+  assert.equal(snap.todos[1].text, "tabandnewline");
+});
+
 test("labelText done/total", () => {
   assert.equal(Model.labelText(null), "\u2610 \u2026");
   assert.equal(
