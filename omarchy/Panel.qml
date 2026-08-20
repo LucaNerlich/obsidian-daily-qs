@@ -212,6 +212,14 @@ Panel {
               font.pixelSize: Style.font.body
               onAccepted: root.addTodo()
               Keys.onEscapePressed: root.close()
+              // "/" in the empty add field jumps to search instead of
+              // inserting; with text present it types normally.
+              Keys.onPressed: function(event) {
+                if (event.text === "/" && inputField.text === "") {
+                  searchField.forceActiveFocus()
+                  event.accepted = true
+                }
+              }
             }
 
             PanelActionButton {
