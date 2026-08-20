@@ -182,17 +182,29 @@ fn push_safe_component(path: &mut PathBuf, part: &str) -> Result<(), VaultError>
 }
 
 fn ensure_under_root(root: &Path, path: &Path) -> Result<(), VaultError> {
-    // Lexical only: we build paths from the vault root with `..` rejected, so
-    // a component-wise prefix check is enough. Avoid canonicalize() — on macOS
-    // `/var` vs `/private/var` would reject in-vault create paths that do not
-    // exist yet.
-    if path.starts_with(root) {
-        return Ok(());
+    // Construction-time guard: paths are built from the vault root with `..`
+    // rejected, so a component-wise prefix check must hold. For paths that
+    // already exist this also resolves symlinks (including a symlinked root
+    // or daily-notes folder) and verifies the real location, so reads cannot
+    // be redirected outside the vault. Write paths re-verify the resolved
+    // target at the filesystem operation in `todos.rs`, where it is
+    // race-free.
+    if !path.starts_with(root) {
+        return Err(VaultError::Io(format!(
+            "resolved path escapes vault root: {}",
+            path.display()
+        )));
     }
-    Err(VaultError::Io(format!(
-        "resolved path escapes vault root: {}",
-        path.display()
-    )))
+    if let (Ok(real), Ok(real_root)) = (path.canonicalize(), root.canonicalize()) {
+        if !real.starts_with(&real_root) {
+            return Err(VaultError::Io(format!(
+                "resolved path escapes vault root: {} resolves to {}",
+                path.display(),
+                real.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -271,5 +283,38 @@ mod tests {
         assert!(path.starts_with(&root));
         assert_eq!(path, root.join("outside").join("2026-08-20.md"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_note_path_escaping_via_symlink() {
+        use std::os::unix::fs::symlink;
+        let root = tmp_vault("symlink-escape");
+        let outside = std::env::temp_dir().join(format!(
+            "obsidian-daily-qs-outside-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&outside).unwrap();
+        // Daily folder is a symlink to an outside directory holding the note.
+        let daily = root.join("Daily");
+        fs::create_dir_all(&daily).unwrap();
+        fs::remove_dir(&daily).unwrap();
+        symlink(&outside, &daily).unwrap();
+        fs::write(outside.join("2026-08-20.md"), "- [ ] x\n").unwrap();
+        let vault = Vault { root: root.clone() };
+        let cfg = DailyNotesConfig {
+            folder: "Daily".into(),
+            format: "YYYY-MM-DD".into(),
+            template: None,
+        };
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let err = vault.daily_note_path(&cfg, date).unwrap_err();
+        assert!(err.to_string().contains("escapes vault root"), "err: {err}");
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 }

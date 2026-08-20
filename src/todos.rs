@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::NaiveDate;
 use regex::Regex;
@@ -194,7 +194,7 @@ pub fn ensure_note(
             .map_err(|e| VaultError::Io(format!("failed to create {}: {e}", parent.display())))?;
     }
     let body = load_template_body(vault, config, date);
-    write_atomic(path, &body)?;
+    write_atomic(vault.root(), path, &body)?;
     Ok(true)
 }
 
@@ -256,7 +256,7 @@ fn add_todo_lines(
         })
         .collect();
     let next = insert_todo_lines(&content, &lines);
-    write_atomic(&path, &next)
+    write_atomic(vault.root(), &path, &next)
 }
 
 /// Toggle the checkbox on the given 1-based line.
@@ -275,7 +275,7 @@ pub fn toggle_todo(vault: &Vault, date: NaiveDate, line: usize) -> Result<Snapsh
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     let next = toggle_line(&content, line)?;
-    write_atomic(&path, &next)?;
+    write_atomic(vault.root(), &path, &next)?;
     read_snapshot(vault, date)
 }
 
@@ -343,19 +343,89 @@ fn toggle_line(content: &str, line: usize) -> Result<String, VaultError> {
     Ok(body)
 }
 
-fn write_atomic(path: &Path, content: &str) -> Result<(), VaultError> {
-    let tmp = path.with_extension("md.tmp-obsidian-daily-qs");
+/// Resolve the note's real location and verify it stays inside the vault.
+///
+/// The parent directory is canonicalized so a symlinked daily-notes folder is
+/// followed to its real location; anything outside the (canonicalized) vault
+/// root is refused. An existing note may itself be a symlink — if its target
+/// lies inside the vault it is written through, otherwise the write is
+/// refused.
+fn resolve_note_target(vault_root: &Path, path: &Path) -> Result<PathBuf, VaultError> {
+    let root = vault_root.canonicalize().map_err(|e| {
+        VaultError::Io(format!(
+            "failed to resolve vault root {}: {e}",
+            vault_root.display()
+        ))
+    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| VaultError::Io(format!("note path has no parent: {}", path.display())))?;
+    let real_parent = parent
+        .canonicalize()
+        .map_err(|e| VaultError::Io(format!("failed to resolve {}: {e}", parent.display())))?;
+    if !real_parent.starts_with(&root) {
+        return Err(VaultError::Io(format!(
+            "refusing to write outside the vault: {} resolves to {}",
+            parent.display(),
+            real_parent.display()
+        )));
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| VaultError::Io(format!("note path has no file name: {}", path.display())))?;
+    let resolved = real_parent.join(name);
+    // A missing note is created at the already-verified parent; a note that
+    // resolves through symlinks must end up inside the vault.
+    match fs::canonicalize(&resolved) {
+        Ok(real) if real.starts_with(&root) => Ok(real),
+        Ok(real) => Err(VaultError::Io(format!(
+            "refusing to write outside the vault: {} resolves to {}",
+            path.display(),
+            real.display()
+        ))),
+        Err(_) => Ok(resolved),
+    }
+}
+
+/// Unpredictable sibling of `target`: same directory so the final rename
+/// stays atomic, random suffix so a pre-created path cannot collide.
+fn temp_path_for(target: &Path) -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut name = target
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(format!(
+        ".tmp-obsidian-daily-qs-{}-{nonce}",
+        std::process::id()
+    ));
+    target.with_file_name(name)
+}
+
+fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), VaultError> {
+    let target = resolve_note_target(vault_root, path)?;
+    let tmp = temp_path_for(&target);
     {
-        let mut file = fs::File::create(&tmp)
+        // `create_new` is O_CREAT|O_EXCL: it fails if anything — including a
+        // symlink — already sits at the temp path, so a pre-created link
+        // cannot redirect this write. The parent was canonicalized above, so
+        // the temp file cannot escape through a symlinked directory either.
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
             .map_err(|e| VaultError::Io(format!("failed to create {}: {e}", tmp.display())))?;
         file.write_all(content.as_bytes())
             .map_err(|e| VaultError::Io(format!("failed to write {}: {e}", tmp.display())))?;
         file.sync_all()
             .map_err(|e| VaultError::Io(format!("failed to sync {}: {e}", tmp.display())))?;
     }
-    fs::rename(&tmp, path).map_err(|e| {
+    fs::rename(&tmp, &target).map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        VaultError::Io(format!("failed to replace {}: {e}", path.display()))
+        VaultError::Io(format!("failed to replace {}: {e}", target.display()))
     })?;
     Ok(())
 }
@@ -593,5 +663,91 @@ mod tests {
             1
         );
         let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_write_through_symlinked_note_folder() {
+        use std::os::unix::fs::symlink;
+        let (vault, date, _note) = vault_with("- [ ] open\n");
+        let outside = unique_temp("outside-folder");
+        fs::create_dir_all(&outside).unwrap();
+        let daily = vault.root().join("Daily");
+        fs::remove_dir_all(&daily).unwrap();
+        symlink(&outside, &daily).unwrap();
+        let err = add_todo(&vault, date, "nope").unwrap_err();
+        assert!(err.to_string().contains("outside the vault"), "err: {err}");
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(vault.root());
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_write_when_note_symlinks_outside() {
+        use std::os::unix::fs::symlink;
+        let (vault, date, note) = vault_with("- [ ] open\n");
+        let outside = unique_temp("outside-note");
+        fs::create_dir_all(&outside).unwrap();
+        let real = outside.join("target.md");
+        fs::write(&real, "- [ ] precious\n").unwrap();
+        fs::remove_file(&note).unwrap();
+        symlink(&real, &note).unwrap();
+        let err = toggle_todo(&vault, date, 1).unwrap_err();
+        // The daily-note path check resolves the symlink and refuses before
+        // any write is attempted.
+        assert!(err.to_string().contains("escapes vault root"), "err: {err}");
+        assert_eq!(fs::read_to_string(&real).unwrap(), "- [ ] precious\n");
+        let _ = fs::remove_dir_all(vault.root());
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn follows_in_vault_symlinked_note() {
+        use std::os::unix::fs::symlink;
+        let (vault, date, note) = vault_with("- [ ] open\n");
+        let archive = vault.root().join("Archive");
+        fs::create_dir_all(&archive).unwrap();
+        let real = archive.join("2026-08-20.md");
+        fs::write(&real, "- [ ] open\n").unwrap();
+        fs::remove_file(&note).unwrap();
+        symlink(&real, &note).unwrap();
+        toggle_todo(&vault, date, 1).unwrap();
+        // The real in-vault file is updated and the user's symlink survives.
+        assert!(fs::read_to_string(&real).unwrap().starts_with("- [x] open"));
+        assert!(
+            fs::symlink_metadata(&note)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn precreated_temp_symlink_cannot_redirect() {
+        use std::os::unix::fs::symlink;
+        let (vault, date, note) = vault_with("- [ ] open\n");
+        let outside = unique_temp("outside-tmp");
+        fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("victim.txt");
+        fs::write(&victim, "untouched\n").unwrap();
+        // The old predictable temp path, pre-created as a symlink to a file
+        // outside the vault. The randomized temp name never collides with it.
+        let stale = note.with_extension("md.tmp-obsidian-daily-qs");
+        symlink(&victim, &stale).unwrap();
+        toggle_todo(&vault, date, 1).unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched\n");
+        assert!(
+            fs::symlink_metadata(&stale)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(fs::read_to_string(&note).unwrap().starts_with("- [x] open"));
+        let _ = fs::remove_dir_all(vault.root());
+        let _ = fs::remove_dir_all(outside);
     }
 }

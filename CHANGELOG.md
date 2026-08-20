@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Enforce the vault boundary on resolved paths: a symlinked daily-notes folder
+  or note file that resolves outside the (canonicalized) vault root is refused
+  for reads and writes. Atomic note writes resolve the parent directory first
+  and create the temp file with `O_EXCL` (`create_new`) under an unpredictable
+  name, so a pre-created `*.tmp-obsidian-daily-qs` symlink can no longer
+  redirect a write outside the vault.
+
 ## [1.3.0] - 2026-08-20
 
 ### Added
