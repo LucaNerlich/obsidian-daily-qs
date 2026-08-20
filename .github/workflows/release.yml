@@ -1,0 +1,56 @@
+name: Release
+
+# Re-attests the marketplace bundle requirements on the tagged SHA, then
+# publishes the GitHub Release. A skipped or failed verify must not produce
+# a release asset for that tag.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: verify bundle and publish GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect committed ELF
+        run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh
+
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-verify-musl
+
+      - name: Marketplace bundle checks
+        run: scripts/verify-bundle.sh
+
+      - name: Package committed ELF
+        run: scripts/package-release.sh
+
+      - name: Publish GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          asset="dist/obsidian-daily-qs-${version}-linux-x86_64.tar.gz"
+          notes="$(scripts/changelog-notes.sh "$version")"
+          {
+            echo "$notes"
+            echo
+            echo "Artifact: \`$(basename "$asset")\` (statically linked musl x86_64)."
+          } > /tmp/release-notes.md
+          gh release create "$tag" "$asset" --title "$tag" --notes-file /tmp/release-notes.md

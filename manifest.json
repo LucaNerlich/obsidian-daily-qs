@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "luca.obsidian-daily",
+  "name": "Obsidian Daily",
+  "version": "0.1.0",
+  "author": "Luca Nerlich",
+  "license": "Apache-2.0",
+  "description": "View and manage today's Obsidian daily note todos from the Omarchy bar. Requires OBSIDIAN_VAULT_ROOT.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "omarchy/BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Obsidian Daily",
+    "description": "Shows today's open daily-note todos and opens a panel to check and add items.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

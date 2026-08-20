@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: test (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Match rust-toolchain.toml. `@stable` installs clippy/rustfmt on the
+      # `stable` toolchain name, but the pin overrides cargo to `1.97.1`, which
+      # then fails `cargo fmt` with "cargo-fmt is not installed".
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+      - name: Plugin model tests
+        run: node omarchy/model.test.mjs
+
+  msrv:
+    name: test (rust 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.85.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.85.0
+
+      - name: Check declared minimum Rust version
+        run: cargo check --all-targets --locked
+
+  # Independent of linux/msrv: marketplace review needs this job to run even
+  # if a prerequisite such as rustfmt is missing. A skipped verify cannot
+  # attest that the bundled ELF matches the reviewed source. Do not add
+  # `needs:` here. The tag Release workflow re-runs the same script.
+  verify-bundle:
+    name: marketplace bundle (inspectable, reproducible)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Inspect before installing the pinned toolchain so a rustup failure
+      # cannot skip the non-stripped / recorded-hash / source-id attestation.
+      # The source-id check catches a leftover ELF after a comment-only Rust
+      # edit without waiting for the musl rebuild.
+      - name: Inspect committed ELF
+        run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh
+
+      # Pin to the toolchain in rust-toolchain.toml so the check reproduces
+      # the exact binary that was committed.
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: verify-bundle-musl
+
+      - name: Rebuild and compare byte-for-byte
+        run: scripts/verify-bundle.sh
