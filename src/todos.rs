@@ -164,11 +164,23 @@ fn move_open_from_previous(vault: &Vault, date: NaiveDate) -> Result<usize, Vaul
         .filter(|item| !existing.contains(&item.text))
         .map(|item| (item.depth, item.text))
         .collect();
-    if to_move.is_empty() {
-        return Ok(0);
+    if !to_move.is_empty() {
+        add_todo_lines(vault, date, &to_move)?;
     }
-    add_todo_lines(vault, date, &to_move)?;
-    remove_todos(vault, prev, &to_move)?;
+    // Reconcile against the target's current open todos instead of only the
+    // lines added above: if an earlier run added to the target but failed
+    // before removing from the previous note (crash, write error), the
+    // stranded items are still open in both notes and complete here.
+    let target_open: Vec<(usize, String)> = {
+        let snap = read_snapshot(vault, date)?;
+        snap.todos
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| !t.checked)
+            .map(|t| (t.depth, t.text))
+            .collect()
+    };
+    remove_todos(vault, prev, &target_open)?;
     Ok(to_move.len())
 }
 
@@ -744,6 +756,27 @@ mod tests {
                 .count(),
             1
         );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_completes_interrupted_move() {
+        // Simulate a crash between "add to today" and "remove from
+        // yesterday": the todo is open in both notes. The next carry-over
+        // must still empty the previous note instead of stranding it.
+        let (vault, today, _) = vault_with("- [ ] ghost\n");
+        let ynote = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&ynote, "- [ ] ghost\n- [x] done\n").unwrap();
+        carry_over(&vault, today).unwrap();
+        assert_eq!(fs::read_to_string(&ynote).unwrap(), "- [x] done\n");
+        let texts: Vec<_> = read_snapshot(&vault, today)
+            .unwrap()
+            .todos
+            .unwrap()
+            .into_iter()
+            .map(|t| t.text)
+            .collect();
+        assert_eq!(texts.iter().filter(|t| *t == "ghost").count(), 1);
         let _ = fs::remove_dir_all(vault.root());
     }
 
