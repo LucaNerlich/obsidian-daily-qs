@@ -31,6 +31,10 @@ BarWidget {
   readonly property string actionBinary: actionFallback ? "obsidian-daily-qs" : bundledBinary
   property var pendingActionArgs: []
 
+  // Actions requested while another one is still running; drained in order
+  // on completion instead of being dropped.
+  property var actionQueue: []
+
   readonly property var panelItem: panelLoader.item
   readonly property bool opened: panelItem ? panelItem.opened === true : false
 
@@ -148,12 +152,21 @@ BarWidget {
   }
 
   function runAction(args) {
-    if (actionProc.running) return
     if (!args || !args.length) return
+    if (actionProc.running) {
+      root.actionQueue.push(args)
+      return
+    }
     root.pendingActionArgs = args
     actionProc.retried = false
     actionProc.command = [root.actionBinary].concat(args)
     actionProc.running = true
+  }
+
+  function drainActionQueue() {
+    if (actionProc.running) return
+    if (root.actionQueue.length === 0) return
+    runAction(root.actionQueue.shift())
   }
 
   function refreshView() {
@@ -295,6 +308,7 @@ BarWidget {
       actionProc.startedOnce = false
       if (!failedStart || root.pendingActionArgs.length === 0) {
         root.pendingActionArgs = []
+        root.drainActionQueue()
         return
       }
       if (actionProc.retried) {
@@ -305,6 +319,7 @@ BarWidget {
           root.actionFailures = 0
           root.actionFallback = !root.actionFallback
         }
+        root.drainActionQueue()
         return
       }
       actionProc.retried = true
