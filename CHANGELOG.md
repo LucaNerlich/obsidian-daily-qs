@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-21
+
+### Changed
+
+- Carry over now **moves** yesterday's still-open todos into the new day
+  (preserving nesting) instead of copying them: the previous daily note is
+  left with only its done todos. Open todos that already exist in the target
+  note are not duplicated and stay in the previous note.
+- Creating a new daily note (first write of a new day) automatically rolls
+  the previous day's open todos into it.
+
+### Fixed
+
+- Note creation no longer creates directories outside the vault before the
+  write check rejects the note: `ensure_note` canonicalizes the nearest
+  existing ancestor of the note's parent and verifies it stays inside the
+  vault root before running `create_dir_all`, so a symlinked daily-notes
+  folder with a nested date format cannot leave stray directories at the
+  link target.
+
 ## [1.3.1] - 2026-08-20
 
 ### Security
