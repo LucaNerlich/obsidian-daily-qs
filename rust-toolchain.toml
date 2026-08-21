@@ -1,6 +1,6 @@
 [toolchain]
 # Pinned so the bundled backend is byte-for-byte reproducible. Bump this in
-# the same commit that regenerates omarchy/bin/wireview-pro2-qs.
+# the same commit that regenerates omarchy/bin/obsidian-daily-qs.
 channel = "1.97.1"
 targets = ["x86_64-unknown-linux-musl"]
 # rust-toolchain.toml overrides rustup's default, so rustfmt/clippy must live
