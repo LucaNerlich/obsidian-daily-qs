@@ -92,8 +92,11 @@ Panel {
   }
 
   onOpenedChanged: {
-    if (root.opened)
+    if (root.opened) {
+      // A stale search from the previous session would hide todos.
+      root.searchText = ""
       Qt.callLater(root.focusCapture)
+    }
   }
 
   KeyboardPanel {

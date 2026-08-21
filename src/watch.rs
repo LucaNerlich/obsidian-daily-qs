@@ -55,6 +55,10 @@ pub fn snapshot_for_date(date: chrono::NaiveDate) -> Snapshot {
 }
 
 fn snapshot_key(snap: &Snapshot) -> String {
+    // The serialized body covers what mtime/len miss: same-size checkbox
+    // toggles on coarse-mtime filesystems and carryOverCount changes caused
+    // by edits to yesterday's note.
+    let body = serde_json::to_string(snap).unwrap_or_default();
     if let (Some(path), Some(true)) = (snap.path.as_ref(), snap.exists) {
         let mtime = fs::metadata(path)
             .and_then(|m| m.modified())
@@ -63,9 +67,9 @@ fn snapshot_key(snap: &Snapshot) -> String {
             .map(|d| d.as_millis())
             .unwrap_or(0);
         let len = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        format!("ok:{path}:{mtime}:{len}")
+        format!("ok:{path}:{mtime}:{len}:{body}")
     } else {
-        serde_json::to_string(snap).unwrap_or_default()
+        body
     }
 }
 
@@ -76,4 +80,40 @@ fn emit(snap: &Snapshot) -> bool {
     let mut broken = writeln!(out, "{line}").is_err();
     broken |= out.flush().is_err();
     !broken
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::status::State;
+
+    fn snap_with_carry(carry: usize) -> Snapshot {
+        Snapshot {
+            state: State::Ok,
+            date: Some("2026-08-21".into()),
+            path: Some("/nonexistent/vault/Daily/2026-08-21.md".into()),
+            exists: Some(true),
+            open_count: Some(0),
+            done_count: Some(0),
+            todos: Some(Vec::new()),
+            obsidian_uri: None,
+            carry_over_count: Some(carry),
+            is_today: Some(true),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn key_changes_when_only_carry_over_count_changes() {
+        // The path does not exist, so mtime/len are constant here; the key
+        // must still differ when yesterday's open count changed.
+        assert_ne!(
+            snapshot_key(&snap_with_carry(0)),
+            snapshot_key(&snap_with_carry(3))
+        );
+        assert_eq!(
+            snapshot_key(&snap_with_carry(2)),
+            snapshot_key(&snap_with_carry(2))
+        );
+    }
 }

@@ -143,19 +143,8 @@ BarWidget {
     root.applyViewParsed(parsed)
   }
 
-  function clearStatus() {
-    root.statusState = "ok"
-    root.date = ""
-    root.path = ""
-    root.exists = false
-    root.openCount = 0
-    root.doneCount = 0
-    root.todos = []
-    root.error = ""
-    root.obsidianUri = ""
-    root.carryOverCount = 0
-    root.isToday = true
-  }
+  // Watch failure paths keep the last data and only mark it stale
+  // (statusState "error") instead of resetting to a healthy zeroed state.
 
   function runAction(args) {
     if (!args || !args.length) return
@@ -256,28 +245,38 @@ BarWidget {
     id: watchProc
     command: [root.watchBinary, "watch"]
     property bool startedOnce: false
+    property real startedAtMs: 0
+    // A run shorter than this counts as a crash for fallback counting.
+    readonly property int minHealthyRunMs: 10000
     stdout: SplitParser {
       onRead: function(line) { root.applyTodayLine(line) }
     }
     onStarted: {
       watchProc.startedOnce = true
-      root.watchFailures = 0
+      watchProc.startedAtMs = Date.now()
     }
     onExited: {
-      root.clearStatus()
+      // The watch stream only exits on crash or broken pipe; keep the last
+      // data but mark it stale instead of showing a healthy zeroed state.
+      root.statusState = "error"
       watchRestartTimer.restart()
     }
     onRunningChanged: {
       if (watchProc.running) return
       var failedStart = !watchProc.startedOnce
+      var shortLived = !failedStart
+        && (Date.now() - watchProc.startedAtMs) < watchProc.minHealthyRunMs
       watchProc.startedOnce = false
-      if (failedStart) {
-        root.clearStatus()
+      if (failedStart || shortLived) {
+        if (root.statusState !== "error") root.statusState = "error"
         root.watchFailures += 1
         if (root.watchFailures >= root.fallbackThreshold) {
           root.watchFailures = 0
           root.watchFallback = !root.watchFallback
         }
+      } else {
+        // Sustained healthy run before this exit: restart the count.
+        root.watchFailures = 0
       }
       watchRestartTimer.restart()
     }
