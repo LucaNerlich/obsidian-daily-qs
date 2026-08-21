@@ -60,9 +60,9 @@ Panel {
     inputField.text = ""
   }
 
-  function toggleTodo(line) {
+  function toggleTodo(line, text) {
     if (!hasWatcher || typeof watcher.toggleTodo !== "function") return
-    watcher.toggleTodo(line)
+    watcher.toggleTodo(line, text)
   }
 
   function shiftDay(delta) {
@@ -333,7 +333,7 @@ Panel {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.toggleTodo(modelData.line)
+                  onClicked: root.toggleTodo(modelData.line, modelData.text)
                 }
               }
 
@@ -350,7 +350,7 @@ Panel {
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.toggleTodo(modelData.line)
+                  onClicked: root.toggleTodo(modelData.line, modelData.text)
                 }
               }
             }

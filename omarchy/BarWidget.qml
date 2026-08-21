@@ -181,11 +181,15 @@ BarWidget {
     root.runAction(["add", "--date", d, "--text", trimmed])
   }
 
-  function toggleTodo(line) {
+  function toggleTodo(line, text) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
-    root.runAction(["toggle", "--date", d, "--line", String(Math.floor(n))])
+    var args = ["toggle", "--date", d, "--line", String(Math.floor(n))]
+    // Guard against a stale snapshot flipping the wrong checkbox.
+    if (typeof text === "string" && text !== "")
+      args.push("--expect-text", text)
+    root.runAction(args)
   }
 
   function carryOver() {

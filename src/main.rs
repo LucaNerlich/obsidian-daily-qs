@@ -46,6 +46,9 @@ enum Command {
         /// 1-based line number of the checkbox in the daily note
         #[arg(long)]
         line: usize,
+        /// Todo text the caller saw at that line; refuse if it changed
+        #[arg(long)]
+        expect_text: Option<String>,
         /// Calendar day `YYYY-MM-DD` (default: today)
         #[arg(long)]
         date: Option<String>,
@@ -69,7 +72,14 @@ fn main() {
         Command::Status { date } => emit(run(read_snapshot, date)),
         Command::Watch => watch::watch(),
         Command::Add { text, date } => emit(run(|vault, d| add_todo(vault, d, &text), date)),
-        Command::Toggle { line, date } => emit(run(|vault, d| toggle_todo(vault, d, line), date)),
+        Command::Toggle {
+            line,
+            expect_text,
+            date,
+        } => emit(run(
+            |vault, d| toggle_todo(vault, d, line, expect_text.as_deref()),
+            date,
+        )),
         Command::CarryOver { date } => emit(run(carry_over, date)),
         Command::Open { date } => emit(run(open_in_obsidian, date)),
     }
