@@ -134,7 +134,13 @@ BarWidget {
   }
 
   function applyViewLine(line) {
-    root.applyViewParsed(Model.parseLine(String(line || "")))
+    var parsed = Model.parseLine(String(line || ""))
+    // A response for a day the user already navigated away from is stale;
+    // applying it would rewind the panel to the previous viewDate. Error
+    // snapshots carry no date and always apply so failures stay visible.
+    if (parsed && parsed.date && root.viewDate !== "" && parsed.date !== root.viewDate)
+      return
+    root.applyViewParsed(parsed)
   }
 
   function clearStatus() {
