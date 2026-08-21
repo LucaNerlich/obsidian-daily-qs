@@ -1,5 +1,8 @@
 # obsidian-daily-qs
 
+[![GitHub Release](https://img.shields.io/github/v/release/LucaNerlich/obsidian-daily-qs)](https://github.com/LucaNerlich/obsidian-daily-qs/releases)
+[![Omarchy marketplace](https://img.shields.io/badge/Omarchy-marketplace-teal)](https://omarchyplugins.com/plugin.html?id=luca.obsidian-daily)
+
 Omarchy Quattro bar widget for today's [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes) todos: view open items, add new checkboxes, and toggle them from a bar panel.
 
 ## Requirements
