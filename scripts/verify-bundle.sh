@@ -94,8 +94,11 @@ crate_version="$(awk -F '"' '/^version = / {print $2; exit}' "$repo_root/Cargo.t
 manifest_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$repo_root/manifest.json")"
 [[ "$crate_version" == "$manifest_version" ]] || fail "Cargo.toml version ($crate_version) != manifest.json version ($manifest_version)"
 
-bin_version="$("$bin" --version | awk '{print $NF}')"
-[[ "$bin_version" == "$crate_version" ]] || fail "committed ELF --version is $bin_version but Cargo.toml is $crate_version; rebuild the bundle after bumping the version"
+# The committed ELF is never executed here: until the byte-for-byte rebuild
+# below has passed, it is untrusted input, and running it (e.g. `--version`)
+# would let it tamper with this script, PATH, or the toolchain before
+# attestation completes. Version identity is attested by the manifest/tag
+# alignment above plus the rebuild comparison against the tracked source.
 
 if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
   tag="${GITHUB_REF_NAME#v}"
