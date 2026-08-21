@@ -136,16 +136,19 @@ fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, Vaul
         .collect())
 }
 
-/// Copy yesterday's still-open todos into `date` (usually today), preserving
-/// their nesting. Todos whose parent was not carried are re-parented under
-/// the nearest carried ancestor (depth is clamped to previous depth + 1).
-pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
+/// Move yesterday's still-open todos into `date` (usually today), preserving
+/// their nesting, and remove them from the previous note so it is left with
+/// only its done todos. Todos whose parent was not carried are re-parented
+/// under the nearest carried ancestor (depth is clamped to previous depth + 1).
+/// Open todos that already exist in `date` are not duplicated and also stay
+/// in the previous note. Returns the number of moved todos.
+fn move_open_from_previous(vault: &Vault, date: NaiveDate) -> Result<usize, VaultError> {
     let prev = date
         .checked_sub_days(chrono::Days::new(1))
         .ok_or_else(|| VaultError::Io("date underflow".into()))?;
     let items = open_todo_items(vault, prev)?;
     if items.is_empty() {
-        return read_snapshot(vault, date);
+        return Ok(0);
     }
     let existing: std::collections::HashSet<String> = {
         let snap = read_snapshot(vault, date)?;
@@ -156,15 +159,57 @@ pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError
             .map(|t| t.text)
             .collect()
     };
-    let to_add: Vec<(usize, String)> = items
+    let to_move: Vec<(usize, String)> = items
         .into_iter()
         .filter(|item| !existing.contains(&item.text))
         .map(|item| (item.depth, item.text))
         .collect();
-    if to_add.is_empty() {
-        return read_snapshot(vault, date);
+    if to_move.is_empty() {
+        return Ok(0);
     }
-    add_todo_lines(vault, date, &to_add)?;
+    add_todo_lines(vault, date, &to_move)?;
+    remove_todos(vault, prev, &to_move)?;
+    Ok(to_move.len())
+}
+
+/// Remove the given still-open todos (matched by text) from `date`'s note.
+fn remove_todos(
+    vault: &Vault,
+    date: NaiveDate,
+    items: &[(usize, String)],
+) -> Result<(), VaultError> {
+    let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    let drop: std::collections::HashSet<usize> = parse_todos(&content)
+        .into_iter()
+        .filter(|t| !t.checked && items.iter().any(|(_, text)| text == &t.text))
+        .map(|t| t.line)
+        .collect();
+    if drop.is_empty() {
+        return Ok(());
+    }
+    let kept: Vec<&str> = content
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| !drop.contains(&(i + 1)))
+        .map(|(_, line)| line)
+        .collect();
+    let mut next = kept.join("\n");
+    if content.ends_with('\n') && !next.is_empty() {
+        next.push('\n');
+    }
+    write_atomic(vault.root(), &path, &next)
+}
+
+/// Roll yesterday's open todos into `date` (usually today): they are moved,
+/// so the previous note keeps only its done todos.
+pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
+    move_open_from_previous(vault, date)?;
     read_snapshot(vault, date)
 }
 
@@ -190,11 +235,14 @@ pub fn ensure_note(
         return Ok(false);
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| VaultError::Io(format!("failed to create {}: {e}", parent.display())))?;
+        create_dir_all_in_vault(vault.root(), parent)?;
     }
     let body = load_template_body(vault, config, date);
     write_atomic(vault.root(), path, &body)?;
+    // First access of a new day: pull yesterday's open todos into the fresh
+    // note and leave the previous one with only its done todos. Safe against
+    // recursion: this note now exists, so the nested ensure_note is a no-op.
+    move_open_from_previous(vault, date)?;
     Ok(true)
 }
 
@@ -341,6 +389,38 @@ fn toggle_line(content: &str, line: usize) -> Result<String, VaultError> {
         body.push('\n');
     }
     Ok(body)
+}
+
+/// Create `dir` and any missing parents after verifying its existing
+/// ancestors stay inside the vault.
+///
+/// The nearest existing ancestor is canonicalized first, so a symlinked
+/// daily-notes folder with a nested date format cannot cause directory
+/// creation outside the vault: only plain, not-yet-existing directories are
+/// created on top of the verified location.
+fn create_dir_all_in_vault(vault_root: &Path, dir: &Path) -> Result<(), VaultError> {
+    let root = vault_root.canonicalize().map_err(|e| {
+        VaultError::Io(format!(
+            "failed to resolve vault root {}: {e}",
+            vault_root.display()
+        ))
+    })?;
+    let anchor = dir
+        .ancestors()
+        .find(|a| a.exists())
+        .ok_or_else(|| VaultError::Io(format!("no existing parent of {}", dir.display())))?;
+    let real_anchor = anchor
+        .canonicalize()
+        .map_err(|e| VaultError::Io(format!("failed to resolve {}: {e}", anchor.display())))?;
+    if !real_anchor.starts_with(&root) {
+        return Err(VaultError::Io(format!(
+            "refusing to create directories outside the vault: {} resolves to {}",
+            anchor.display(),
+            real_anchor.display()
+        )));
+    }
+    fs::create_dir_all(dir)
+        .map_err(|e| VaultError::Io(format!("failed to create {}: {e}", dir.display())))
 }
 
 /// Resolve the note's real location and verify it stays inside the vault.
@@ -642,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn carry_over_copies_open_from_previous_day() {
+    fn carry_over_moves_open_from_previous_day() {
         let (vault, today, _) = vault_with("- [ ] today-only\n");
         let ynote = vault.root().join("Daily").join("2026-08-19.md");
         fs::write(&ynote, "- [ ] leftover\n- [x] finished\n").unwrap();
@@ -651,6 +731,8 @@ mod tests {
         assert!(texts.contains(&"leftover".to_string()));
         assert!(texts.contains(&"today-only".to_string()));
         assert!(!texts.iter().any(|t| t == "finished"));
+        // Moved, not copied: the previous note keeps only its done todos.
+        assert_eq!(fs::read_to_string(&ynote).unwrap(), "- [x] finished\n");
         // Idempotent: second carry-over does not duplicate.
         let snap2 = carry_over(&vault, today).unwrap();
         assert_eq!(
@@ -665,6 +747,37 @@ mod tests {
         let _ = fs::remove_dir_all(vault.root());
     }
 
+    #[test]
+    fn creating_note_rolls_previous_day_over() {
+        let root = unique_temp("rollover");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir_all(root.join("Daily")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("Daily/2026-08-19.md"),
+            "- [ ] drag along\n  - [ ] nested\n- [x] done yesterday\n",
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        // First write of the new day creates the note and rolls yesterday's
+        // open todos into it.
+        add_todo(&vault, date, "fresh").unwrap();
+        let body = fs::read_to_string(vault.root().join("Daily/2026-08-20.md")).unwrap();
+        assert!(body.contains("- [ ] drag along\n  - [ ] nested\n"));
+        assert!(body.contains("- [ ] fresh"));
+        assert_eq!(
+            fs::read_to_string(vault.root().join("Daily/2026-08-19.md")).unwrap(),
+            "- [x] done yesterday\n"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn refuses_write_through_symlinked_note_folder() {
@@ -675,6 +788,33 @@ mod tests {
         let daily = vault.root().join("Daily");
         fs::remove_dir_all(&daily).unwrap();
         symlink(&outside, &daily).unwrap();
+        let err = add_todo(&vault, date, "nope").unwrap_err();
+        assert!(err.to_string().contains("outside the vault"), "err: {err}");
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(vault.root());
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_note_creation_through_symlinked_folder_with_nested_format() {
+        use std::os::unix::fs::symlink;
+        let root = unique_temp("nested-symlink");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"YYYY/MM-DD"}"#,
+        )
+        .unwrap();
+        let outside = unique_temp("outside-nested");
+        fs::create_dir_all(&outside).unwrap();
+        let daily = root.join("Daily");
+        symlink(&outside, &daily).unwrap();
+        let vault = Vault { root: root.clone() };
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        // Note creation must fail before any directory is created through
+        // the symlinked folder outside the vault.
         let err = add_todo(&vault, date, "nope").unwrap_err();
         assert!(err.to_string().contains("outside the vault"), "err: {err}");
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);

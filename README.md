@@ -70,7 +70,7 @@ Setting both keeps the current session working until the next login. Use `pgrep 
   - Add with Enter / `+`.
   - **Open only** / **All todos** toggles completed visibility (default from `openOnly` setting).
   - **◀ / ● / ▶** move to previous day, today, or next day.
-  - **Carry over N** (when viewing today) copies yesterday's still-open todos (preserving nesting).
+  - **Carry over N** (when viewing today) moves yesterday's still-open todos into today (preserving nesting); the previous note keeps only its done todos.
   - Open-in-Obsidian launches `obsidian://open?path=…` via `xdg-open`.
 - **Shell**: `omarchy-shell shell summon luca.obsidian-daily '{}'` / `omarchy-shell shell hide luca.obsidian-daily`.
 
