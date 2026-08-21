@@ -320,7 +320,17 @@ fn add_todo_lines(
 }
 
 /// Toggle the checkbox on the given 1-based line.
-pub fn toggle_todo(vault: &Vault, date: NaiveDate, line: usize) -> Result<Snapshot, VaultError> {
+///
+/// `expect_text` is the todo text the caller saw when rendering the row; if
+/// the note changed since the snapshot (Obsidian autosave, another device),
+/// the line no longer holds that text and the toggle is refused instead of
+/// flipping an unrelated checkbox.
+pub fn toggle_todo(
+    vault: &Vault,
+    date: NaiveDate,
+    line: usize,
+    expect_text: Option<&str>,
+) -> Result<Snapshot, VaultError> {
     if line == 0 {
         return Err(VaultError::Io("line must be >= 1".into()));
     }
@@ -334,6 +344,27 @@ pub fn toggle_todo(vault: &Vault, date: NaiveDate, line: usize) -> Result<Snapsh
     }
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    if let Some(expected) = expect_text.map(str::trim).filter(|t| !t.is_empty()) {
+        let at_line = parse_todos(&content)
+            .into_iter()
+            .find(|t| t.line == line)
+            .map(|t| t.text);
+        match at_line {
+            Some(actual) if actual.trim() == expected => {}
+            Some(actual) => {
+                return Err(VaultError::Io(format!(
+                    "stale view: line {line} now holds {:?} instead of {:?}; refetch and retry",
+                    actual.trim(),
+                    expected
+                )));
+            }
+            None => {
+                return Err(VaultError::Io(format!(
+                    "stale view: line {line} is no longer a todo; refetch and retry"
+                )));
+            }
+        }
+    }
     let next = toggle_line(&content, line)?;
     write_atomic(vault.root(), &path, &next)?;
     read_snapshot(vault, date)
@@ -641,12 +672,41 @@ mod tests {
     #[test]
     fn toggles_checkbox() {
         let (vault, date, note) = vault_with("- [ ] open\n- [x] done\n");
-        toggle_todo(&vault, date, 1).unwrap();
+        toggle_todo(&vault, date, 1, None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert!(body.starts_with("- [x] open\n"));
-        toggle_todo(&vault, date, 2).unwrap();
+        toggle_todo(&vault, date, 2, None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert!(body.contains("- [ ] done\n"));
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn toggles_when_expected_text_matches() {
+        let (vault, date, note) = vault_with("- [ ] open\n- [x] done\n");
+        toggle_todo(&vault, date, 1, Some("open")).unwrap();
+        assert!(
+            fs::read_to_string(&note)
+                .unwrap()
+                .starts_with("- [x] open\n")
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn refuses_toggle_on_stale_line() {
+        let (vault, date, note) = vault_with("- [ ] first\n- [ ] second\n");
+        // The snapshot was rendered before a second todo was inserted above;
+        // line 1 now holds different text than the caller saw.
+        let err = toggle_todo(&vault, date, 1, Some("second")).unwrap_err();
+        assert!(err.to_string().contains("stale view"), "err: {err}");
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "- [ ] first\n- [ ] second\n"
+        );
+        // A line that is no longer a todo at all is also refused.
+        let err = toggle_todo(&vault, date, 1, Some("gone")).unwrap_err();
+        assert!(err.to_string().contains("stale view"), "err: {err}");
         let _ = fs::remove_dir_all(vault.root());
     }
 
@@ -866,7 +926,7 @@ mod tests {
         fs::write(&real, "- [ ] precious\n").unwrap();
         fs::remove_file(&note).unwrap();
         symlink(&real, &note).unwrap();
-        let err = toggle_todo(&vault, date, 1).unwrap_err();
+        let err = toggle_todo(&vault, date, 1, None).unwrap_err();
         // The daily-note path check resolves the symlink and refuses before
         // any write is attempted.
         assert!(err.to_string().contains("escapes vault root"), "err: {err}");
@@ -886,7 +946,7 @@ mod tests {
         fs::write(&real, "- [ ] open\n").unwrap();
         fs::remove_file(&note).unwrap();
         symlink(&real, &note).unwrap();
-        toggle_todo(&vault, date, 1).unwrap();
+        toggle_todo(&vault, date, 1, None).unwrap();
         // The real in-vault file is updated and the user's symlink survives.
         assert!(fs::read_to_string(&real).unwrap().starts_with("- [x] open"));
         assert!(
@@ -911,7 +971,7 @@ mod tests {
         // outside the vault. The randomized temp name never collides with it.
         let stale = note.with_extension("md.tmp-obsidian-daily-qs");
         symlink(&victim, &stale).unwrap();
-        toggle_todo(&vault, date, 1).unwrap();
+        toggle_todo(&vault, date, 1, None).unwrap();
         assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched\n");
         assert!(
             fs::symlink_metadata(&stale)

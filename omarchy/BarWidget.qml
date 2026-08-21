@@ -31,6 +31,10 @@ BarWidget {
   readonly property string actionBinary: actionFallback ? "obsidian-daily-qs" : bundledBinary
   property var pendingActionArgs: []
 
+  // Actions requested while another one is still running; drained in order
+  // on completion instead of being dropped.
+  property var actionQueue: []
+
   readonly property var panelItem: panelLoader.item
   readonly property bool opened: panelItem ? panelItem.opened === true : false
 
@@ -130,7 +134,13 @@ BarWidget {
   }
 
   function applyViewLine(line) {
-    root.applyViewParsed(Model.parseLine(String(line || "")))
+    var parsed = Model.parseLine(String(line || ""))
+    // A response for a day the user already navigated away from is stale;
+    // applying it would rewind the panel to the previous viewDate. Error
+    // snapshots carry no date and always apply so failures stay visible.
+    if (parsed && parsed.date && root.viewDate !== "" && parsed.date !== root.viewDate)
+      return
+    root.applyViewParsed(parsed)
   }
 
   function clearStatus() {
@@ -148,12 +158,21 @@ BarWidget {
   }
 
   function runAction(args) {
-    if (actionProc.running) return
     if (!args || !args.length) return
+    if (actionProc.running) {
+      root.actionQueue.push(args)
+      return
+    }
     root.pendingActionArgs = args
     actionProc.retried = false
     actionProc.command = [root.actionBinary].concat(args)
     actionProc.running = true
+  }
+
+  function drainActionQueue() {
+    if (actionProc.running) return
+    if (root.actionQueue.length === 0) return
+    runAction(root.actionQueue.shift())
   }
 
   function refreshView() {
@@ -181,11 +200,15 @@ BarWidget {
     root.runAction(["add", "--date", d, "--text", trimmed])
   }
 
-  function toggleTodo(line) {
+  function toggleTodo(line, text) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
-    root.runAction(["toggle", "--date", d, "--line", String(Math.floor(n))])
+    var args = ["toggle", "--date", d, "--line", String(Math.floor(n))]
+    // Guard against a stale snapshot flipping the wrong checkbox.
+    if (typeof text === "string" && text !== "")
+      args.push("--expect-text", text)
+    root.runAction(args)
   }
 
   function carryOver() {
@@ -291,6 +314,7 @@ BarWidget {
       actionProc.startedOnce = false
       if (!failedStart || root.pendingActionArgs.length === 0) {
         root.pendingActionArgs = []
+        root.drainActionQueue()
         return
       }
       if (actionProc.retried) {
@@ -301,6 +325,7 @@ BarWidget {
           root.actionFailures = 0
           root.actionFallback = !root.actionFallback
         }
+        root.drainActionQueue()
         return
       }
       actionProc.retried = true
