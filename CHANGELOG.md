@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `verify-bundle` checks the toolchain pin's semantic `components` line
+  instead of any text match, so removing rustfmt/clippy from the pin is no
+  longer masked by comments.
+- All GitHub Actions are pinned to full commit SHAs.
+
+### Fixed
+
+- `watch` change detection keys on the serialized snapshot, so same-size
+  checkbox toggles and carry-over count changes from edits to yesterday's
+  note are emitted immediately.
+- A watch backend that starts but crashes repeatedly now engages the PATH
+  fallback and marks the bar stale (error state) instead of resetting to a
+  healthy zeroed label.
+- The panel clears a leftover search filter when it is reopened.
+- One-shot commands exit quietly on a closed stdout instead of panicking
+  on EPIPE.
+- Atomic note writes no longer leave an orphaned temp file when the write
+  or sync fails, and preserve the existing note's file permissions.
+
 ## [1.4.0] - 2026-08-21
 
 ### Changed

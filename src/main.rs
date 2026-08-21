@@ -4,6 +4,8 @@ use clap::{Parser, Subcommand};
 
 use chrono::{Local, NaiveDate};
 
+use std::io::{self, Write};
+
 use obsidian_daily_qs::config::Vault;
 use obsidian_daily_qs::status::Snapshot;
 use obsidian_daily_qs::watch;
@@ -110,8 +112,11 @@ fn parse_date(date: Option<String>) -> Result<NaiveDate, String> {
 }
 
 fn emit(snap: Snapshot) {
-    println!(
-        "{}",
-        serde_json::to_string(&snap).expect("snapshot serializes")
-    );
+    // Mirror watch::emit: a closed stdout (e.g. `status | head`) must exit
+    // quietly instead of panicking on EPIPE.
+    let line = serde_json::to_string(&snap).expect("snapshot serializes");
+    let mut out = io::stdout().lock();
+    if writeln!(out, "{line}").is_err() || out.flush().is_err() {
+        std::process::exit(0);
+    }
 }

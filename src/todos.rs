@@ -531,7 +531,7 @@ fn temp_path_for(target: &Path) -> PathBuf {
 fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), VaultError> {
     let target = resolve_note_target(vault_root, path)?;
     let tmp = temp_path_for(&target);
-    {
+    let write_result = (|| {
         // `create_new` is O_CREAT|O_EXCL: it fails if anything — including a
         // symlink — already sits at the temp path, so a pre-created link
         // cannot redirect this write. The parent was canonicalized above, so
@@ -545,6 +545,19 @@ fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), Vau
             .map_err(|e| VaultError::Io(format!("failed to write {}: {e}", tmp.display())))?;
         file.sync_all()
             .map_err(|e| VaultError::Io(format!("failed to sync {}: {e}", tmp.display())))?;
+        Ok(())
+    })();
+    if let Err(err) = write_result {
+        // Never leave an orphaned temp file behind in the vault.
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    // Preserve the existing note's permissions across the atomic replace;
+    // the temp file would otherwise carry umask defaults (a 0600 note would
+    // become world-readable).
+    #[cfg(unix)]
+    if let Ok(meta) = fs::metadata(&target) {
+        let _ = fs::set_permissions(&tmp, meta.permissions());
     }
     fs::rename(&tmp, &target).map_err(|e| {
         let _ = fs::remove_file(&tmp);
@@ -869,6 +882,18 @@ mod tests {
             "- [x] done yesterday\n"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_preserves_note_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let (vault, date, note) = vault_with("- [ ] open\n");
+        fs::set_permissions(&note, fs::Permissions::from_mode(0o600)).unwrap();
+        toggle_todo(&vault, date, 1, None).unwrap();
+        let mode = fs::metadata(&note).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let _ = fs::remove_dir_all(vault.root());
     }
 
     #[cfg(unix)]

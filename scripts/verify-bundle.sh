@@ -78,8 +78,10 @@ if grep -Eq '^strip[[:space:]]*=[[:space:]]*(true|"symbols"|"all")' "$repo_root/
 fi
 grep -q '^strip = "debuginfo"' "$repo_root/Cargo.toml" || fail "Cargo.toml [profile.release] must set strip = \"debuginfo\" so nm can inspect the bundle"
 
-grep -q 'rustfmt' "$repo_root/rust-toolchain.toml" || fail "rust-toolchain.toml must pin rustfmt on this channel (installing it only on stable skips CI format, which used to skip this job)"
-grep -q 'clippy' "$repo_root/rust-toolchain.toml" || fail "rust-toolchain.toml must pin clippy on this channel"
+# Match the semantic `components = [...]` line, not any mention in a comment.
+toolchain_components="$(grep -E '^components[[:space:]]*=' "$repo_root/rust-toolchain.toml" || true)"
+grep -q 'rustfmt' <<<"$toolchain_components" || fail "rust-toolchain.toml must pin rustfmt on this channel (installing it only on stable skips CI format, which used to skip this job)"
+grep -q 'clippy' <<<"$toolchain_components" || fail "rust-toolchain.toml must pin clippy on this channel"
 
 if awk '
   $0 == "  verify-bundle:" {in_job=1; next}
