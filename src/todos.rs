@@ -146,6 +146,14 @@ fn move_open_from_previous(vault: &Vault, date: NaiveDate) -> Result<usize, Vaul
     let prev = date
         .checked_sub_days(chrono::Days::new(1))
         .ok_or_else(|| VaultError::Io("date underflow".into()))?;
+    // Create the target note up front without rolling over: otherwise
+    // add_todo_lines's ensure_note would create it here and re-enter this
+    // function. That nested run finished completely (appending the items and
+    // emptying the previous note) before the outer add_todo_lines appended
+    // the same lines again — duplicating every carried todo.
+    let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
+    create_note_if_missing(vault, &config, &path, date)?;
     let items = open_todo_items(vault, prev)?;
     if items.is_empty() {
         return Ok(0);
@@ -236,8 +244,9 @@ pub fn open_in_obsidian(vault: &Vault, date: NaiveDate) -> Result<Snapshot, Vaul
     Ok(snap)
 }
 
-/// Create today's note (and parents) if missing. Returns true when created.
-pub fn ensure_note(
+/// Create the note (and parents) if missing, without rolling over. Returns
+/// true when created.
+fn create_note_if_missing(
     vault: &Vault,
     config: &DailyNotesConfig,
     path: &Path,
@@ -251,11 +260,24 @@ pub fn ensure_note(
     }
     let body = load_template_body(vault, config, date);
     write_atomic(vault.root(), path, &body)?;
-    // First access of a new day: pull yesterday's open todos into the fresh
-    // note and leave the previous one with only its done todos. Safe against
-    // recursion: this note now exists, so the nested ensure_note is a no-op.
-    move_open_from_previous(vault, date)?;
     Ok(true)
+}
+
+/// Create today's note (and parents) if missing. Returns true when created.
+pub fn ensure_note(
+    vault: &Vault,
+    config: &DailyNotesConfig,
+    path: &Path,
+    date: NaiveDate,
+) -> Result<bool, VaultError> {
+    let created = create_note_if_missing(vault, config, path, date)?;
+    // First access of a new day: pull yesterday's open todos into the fresh
+    // note and leave the previous one with only its done todos. Plain note
+    // creation carries no rollover, so this cannot re-enter itself.
+    if created {
+        move_open_from_previous(vault, date)?;
+    }
+    Ok(created)
 }
 
 fn load_template_body(vault: &Vault, config: &DailyNotesConfig, date: NaiveDate) -> String {
@@ -851,6 +873,44 @@ mod tests {
             .collect();
         assert_eq!(texts.iter().filter(|t| *t == "ghost").count(), 1);
         let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_into_missing_note_does_not_duplicate() {
+        // First mutation of the day: the target note does not exist yet.
+        // Creating it must not re-enter the rollover and append every
+        // carried item twice.
+        let root = unique_temp("carry-missing");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir_all(root.join("Daily")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("Daily/2026-08-19.md"),
+            "- [ ] drag along\n  - [ ] nested\n- [x] done yesterday\n",
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let snap = carry_over(&vault, date).unwrap();
+        let todos = snap.todos.unwrap();
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].text, "drag along");
+        assert_eq!(todos[0].depth, 0);
+        assert_eq!(todos[1].text, "nested");
+        assert_eq!(todos[1].depth, 1);
+        let body = fs::read_to_string(vault.root().join("Daily/2026-08-20.md")).unwrap();
+        assert_eq!(body.matches("- [ ] drag along").count(), 1, "body: {body}");
+        assert_eq!(body.matches("- [ ] nested").count(), 1, "body: {body}");
+        assert_eq!(
+            fs::read_to_string(vault.root().join("Daily/2026-08-19.md")).unwrap(),
+            "- [x] done yesterday\n"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
