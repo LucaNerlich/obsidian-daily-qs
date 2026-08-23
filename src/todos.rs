@@ -20,6 +20,45 @@ fn tasks_heading_re() -> Regex {
     Regex::new(r"(?i)^#{1,6}\s+(tasks|todos)\s*$").expect("tasks heading regex")
 }
 
+/// Tracks whether the parser is inside a fenced code block, so checkbox
+/// examples inside code (e.g. a ```` ```dataview ```` query or a markdown
+/// sample) are not counted as todos. A fence opens with three or more
+/// backticks or tildes at line start and closes with a fence of the same
+/// character at least as long; an unclosed fence runs to the end of the note.
+#[derive(Default)]
+struct FenceState {
+    marker: Option<char>,
+    length: usize,
+}
+
+impl FenceState {
+    /// Update the state for a line; returns true while inside a fence
+    /// (including the fence line itself).
+    fn update(&mut self, line: &str) -> bool {
+        let trimmed = line.trim_start();
+        let fence_char = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
+        let run = fence_char
+            .map(|c| trimmed.chars().take_while(|t| *t == c).count())
+            .unwrap_or(0);
+        if run >= 3 {
+            match self.marker {
+                None => {
+                    self.marker = fence_char;
+                    self.length = run;
+                    return true;
+                }
+                Some(marker) if fence_char == Some(marker) && run >= self.length => {
+                    self.marker = None;
+                    self.length = 0;
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        self.marker.is_some()
+    }
+}
+
 /// Count indentation levels of a checkbox prefix: every tab is one level,
 /// every two spaces one level (matches Obsidian's list indentation).
 fn indent_level(indent: &str) -> usize {
@@ -40,7 +79,11 @@ pub fn parse_todos(content: &str) -> Vec<TodoItem> {
     // Line numbers of open ancestors, indexed by depth (stack[d] has depth d).
     let mut stack: Vec<usize> = Vec::new();
     let mut last_depth = 0usize;
+    let mut fence = FenceState::default();
     for (idx, line) in content.lines().enumerate() {
+        if fence.update(line) {
+            continue;
+        }
         let Some(caps) = re.captures(line) else {
             continue;
         };
@@ -638,6 +681,31 @@ mod tests {
         assert!(todos[2].checked);
         assert_eq!(todos[3].line, 7);
         assert_eq!(todos[3].text, "indented");
+    }
+
+    #[test]
+    fn skips_checkboxes_inside_code_fences() {
+        let todos = parse_todos(
+            "- [ ] real\n```dataview\nTASK FROM \"Projects\"\n```\n- [x] done\n```markdown\n- [ ] sample\n```\n- [ ] after\n",
+        );
+        assert_eq!(todos.len(), 3);
+        assert_eq!(todos[0].text, "real");
+        assert_eq!(todos[1].text, "done");
+        assert_eq!(todos[2].text, "after");
+    }
+
+    #[test]
+    fn skips_checkboxes_inside_tilde_fences() {
+        let todos = parse_todos("~~~\n- [ ] in fence\n~~~\n- [ ] outside\n");
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].text, "outside");
+    }
+
+    #[test]
+    fn skips_checkboxes_inside_unclosed_fence() {
+        let todos = parse_todos("- [ ] real\n```markdown\n- [ ] swallowed\n- [ ] also swallowed\n");
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].text, "real");
     }
 
     #[test]
