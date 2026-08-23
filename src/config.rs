@@ -160,7 +160,7 @@ impl Vault {
 }
 
 /// Drop empty / `.` / `..` path segments so settings cannot escape the vault.
-fn sanitize_rel(value: String) -> String {
+pub(crate) fn sanitize_rel(value: String) -> String {
     value
         .split('/')
         .filter(|p| !p.is_empty() && *p != "." && *p != "..")
@@ -168,7 +168,7 @@ fn sanitize_rel(value: String) -> String {
         .join("/")
 }
 
-fn push_safe_component(path: &mut PathBuf, part: &str) -> Result<(), VaultError> {
+pub(crate) fn push_safe_component(path: &mut PathBuf, part: &str) -> Result<(), VaultError> {
     if part.is_empty() || part == "." {
         return Ok(());
     }
@@ -181,7 +181,7 @@ fn push_safe_component(path: &mut PathBuf, part: &str) -> Result<(), VaultError>
     Ok(())
 }
 
-fn ensure_under_root(root: &Path, path: &Path) -> Result<(), VaultError> {
+pub(crate) fn ensure_under_root(root: &Path, path: &Path) -> Result<(), VaultError> {
     // Construction-time guard: paths are built from the vault root with `..`
     // rejected, so a component-wise prefix check must hold. For paths that
     // already exist this also resolves symlinks (including a symlinked root

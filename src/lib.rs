@@ -1,6 +1,7 @@
 //! Obsidian daily-notes backend for the Omarchy Quattro bar widget.
 
 pub mod config;
+pub mod dataview;
 pub mod format;
 pub mod open;
 pub mod status;
