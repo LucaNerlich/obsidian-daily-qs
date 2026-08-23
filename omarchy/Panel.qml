@@ -158,7 +158,7 @@ Panel {
 
             iconComponent: Component {
               Text {
-                text: "\u2610"
+                text: "\ue6bb"
                 textFormat: Text.PlainText
                 color: root.statusState === "error" ? root.urgent : root.foreground
                 font.family: root.fontFamily

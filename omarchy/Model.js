@@ -149,14 +149,14 @@ function safeUri(value) {
 }
 
 function labelText(status) {
-  if (!status) return "\u2610 \u2026";
-  if (status.state === "error") return "\u2610 !";
-  if (!status.exists) return "\u2610 ·";
+  if (!status) return "\ue6bb \u2026";
+  if (status.state === "error") return "\ue6bb !";
+  if (!status.exists) return "\ue6bb ·";
   var extraOpen = (status.tasksTodayOpenCount || 0) + (status.dataviewOpenCount || 0);
   var extraDone = (status.tasksTodayDoneCount || 0) + (status.dataviewDoneCount || 0);
   var total = status.doneCount + status.openCount + extraOpen + extraDone;
   var done = status.doneCount + extraDone;
-  return "\u2610 " + String(done) + "/" + String(total);
+  return "\ue6bb " + String(done) + "/" + String(total);
 }
 
 function tooltipText(status) {
