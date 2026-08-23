@@ -46,6 +46,12 @@ BarWidget {
   property int openCount: 0
   property int doneCount: 0
   property var todos: []
+  property var tasksTodayTodos: []
+  property var dataviewTodos: []
+  property int tasksTodayOpenCount: 0
+  property int tasksTodayDoneCount: 0
+  property int dataviewOpenCount: 0
+  property int dataviewDoneCount: 0
   property string error: ""
   property string obsidianUri: ""
   property int carryOverCount: 0
@@ -59,6 +65,12 @@ BarWidget {
   property int viewOpenCount: 0
   property int viewDoneCount: 0
   property var viewTodos: []
+  property var viewTasksTodayTodos: []
+  property var viewDataviewTodos: []
+  property int viewTasksTodayOpenCount: 0
+  property int viewTasksTodayDoneCount: 0
+  property int viewDataviewOpenCount: 0
+  property int viewDataviewDoneCount: 0
   property string viewError: ""
   property string viewObsidianUri: ""
   property int viewCarryOverCount: 0
@@ -74,6 +86,12 @@ BarWidget {
     openCount: root.openCount,
     doneCount: root.doneCount,
     todos: root.todos,
+    tasksTodayTodos: root.tasksTodayTodos,
+    dataviewTodos: root.dataviewTodos,
+    tasksTodayOpenCount: root.tasksTodayOpenCount,
+    tasksTodayDoneCount: root.tasksTodayDoneCount,
+    dataviewOpenCount: root.dataviewOpenCount,
+    dataviewDoneCount: root.dataviewDoneCount,
     error: root.error,
     obsidianUri: root.obsidianUri,
     carryOverCount: root.carryOverCount,
@@ -110,6 +128,12 @@ BarWidget {
     root.openCount = parsed.openCount
     root.doneCount = parsed.doneCount
     root.todos = parsed.todos || []
+    root.tasksTodayTodos = parsed.tasksTodayTodos || []
+    root.dataviewTodos = parsed.dataviewTodos || []
+    root.tasksTodayOpenCount = parsed.tasksTodayOpenCount || 0
+    root.tasksTodayDoneCount = parsed.tasksTodayDoneCount || 0
+    root.dataviewOpenCount = parsed.dataviewOpenCount || 0
+    root.dataviewDoneCount = parsed.dataviewDoneCount || 0
     root.error = parsed.error || ""
     root.obsidianUri = parsed.obsidianUri || ""
     root.carryOverCount = parsed.carryOverCount || 0
@@ -127,6 +151,12 @@ BarWidget {
     root.viewOpenCount = parsed.openCount
     root.viewDoneCount = parsed.doneCount
     root.viewTodos = parsed.todos || []
+    root.viewTasksTodayTodos = parsed.tasksTodayTodos || []
+    root.viewDataviewTodos = parsed.dataviewTodos || []
+    root.viewTasksTodayOpenCount = parsed.tasksTodayOpenCount || 0
+    root.viewTasksTodayDoneCount = parsed.tasksTodayDoneCount || 0
+    root.viewDataviewOpenCount = parsed.dataviewOpenCount || 0
+    root.viewDataviewDoneCount = parsed.dataviewDoneCount || 0
     root.viewError = parsed.error || ""
     root.viewObsidianUri = parsed.obsidianUri || ""
     root.viewCarryOverCount = parsed.carryOverCount || 0
@@ -145,6 +175,71 @@ BarWidget {
 
   // Watch failure paths keep the last data and only mark it stale
   // (statusState "error") instead of resetting to a healthy zeroed state.
+  property var lastToggleAt: ({})
+  readonly property bool actionBusy: actionProc.running
+  // Per-file 1.5s debounce — you measured 1-2s needed to avoid ENOENT.
+  // Same file (all Routines tasks share one file) second toggle within 1500ms
+  // is dropped; different files can still flip in parallel. Optimistic flip
+  // is kept for instant feel, but same-file second tap is ignored.
+  function shouldDebounce(key) {
+    var now = Date.now()
+    var file = String(key).split(":")[0]
+    for (var k in root.lastToggleAt) {
+      var kFile = String(k).split(":")[0]
+      if (kFile === file && now - root.lastToggleAt[k] < 1500) return true
+    }
+    if (root.lastToggleAt[key] && now - root.lastToggleAt[key] < 1500) return true
+    root.lastToggleAt[key] = now
+    for (var k2 in root.lastToggleAt) {
+      if (now - root.lastToggleAt[k2] > 5000) delete root.lastToggleAt[k2]
+    }
+    return false
+  }
+  function optimisticToggle(key, listName) {
+    var list = root[listName]
+    if (!Array.isArray(list)) return
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i]
+      var itKey = (it.sourceNote || "daily") + ":" + it.line
+      if (itKey === key) {
+        // flip in place and reassign to trigger QML binding
+        var copy = list.slice()
+        copy[i] = { line: it.line, checked: !it.checked, text: it.text, depth: it.depth, parentLine: it.parentLine, sourceNote: it.sourceNote }
+        root[listName] = copy
+        if (listName === "viewTodos") root.viewTodos = copy
+        else if (listName === "viewTasksTodayTodos") root.viewTasksTodayTodos = copy
+        else if (listName === "viewDataviewTodos") root.viewDataviewTodos = copy
+        // also keep bar counts optimistic
+        if (listName === "viewTasksTodayTodos" || listName === "viewDataviewTodos") {
+          // counts will be corrected by next snapshot; nudge for instant label
+          var open = 0, done = 0
+          for (var j = 0; j < copy.length; j++) copy[j].checked ? done++ : open++
+          if (listName === "viewTasksTodayTodos") { root.viewTasksTodayOpenCount = open; root.viewTasksTodayDoneCount = done }
+          else { root.viewDataviewOpenCount = open; root.viewDataviewDoneCount = done }
+          // also update bar's today counts if viewDate === today
+          if (root.viewDate === root.date) {
+            root.tasksTodayOpenCount = root.viewTasksTodayOpenCount
+            root.tasksTodayDoneCount = root.viewTasksTodayDoneCount
+            root.dataviewOpenCount = root.viewDataviewOpenCount
+            root.dataviewDoneCount = root.viewDataviewDoneCount
+          }
+        } else {
+          var o2 = 0, d2 = 0
+          for (var k2 = 0; k2 < copy.length; k2++) copy[k2].checked ? d2++ : o2++
+          root.viewOpenCount = o2; root.viewDoneCount = d2
+          if (root.viewDate === root.date) { root.openCount = o2; root.doneCount = d2 }
+        }
+        break
+      }
+    }
+    // also keep the other view in sync (watch vs view)
+    if (root.viewDate === root.date) {
+      // mirror view -> today for instant bar label
+      root.tasksTodayTodos = root.viewTasksTodayTodos
+      root.dataviewTodos = root.viewDataviewTodos
+      root.todos = root.viewTodos
+    }
+  }
 
   function runAction(args) {
     if (!args || !args.length) return
@@ -192,9 +287,24 @@ BarWidget {
   function toggleTodo(line, text) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
+    var key = "daily:" + Math.floor(n)
+    if (root.shouldDebounce(key)) return
     var d = root.viewDate || Model.todayIso()
     var args = ["toggle", "--date", d, "--line", String(Math.floor(n))]
-    // Guard against a stale snapshot flipping the wrong checkbox.
+    if (typeof text === "string" && text !== "")
+      args.push("--expect-text", text)
+    root.runAction(args)
+  }
+
+  function toggleFile(file, line, text) {
+    var n = Number(line)
+    if (!isFinite(n) || n < 1) return
+    var f = String(file || "").trim()
+    if (f === "") return
+    var key = f + ":" + Math.floor(n)
+    if (root.shouldDebounce(key)) return
+    var d = root.viewDate || Model.todayIso()
+    var args = ["toggle", "--date", d, "--file", f, "--line", String(Math.floor(n))]
     if (typeof text === "string" && text !== "")
       args.push("--expect-text", text)
     root.runAction(args)

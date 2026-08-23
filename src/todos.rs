@@ -8,8 +8,10 @@ use chrono::NaiveDate;
 use regex::Regex;
 
 use crate::config::{DailyNotesConfig, Vault, VaultError};
+use crate::dataview;
 use crate::open;
 use crate::status::{Snapshot, TodoItem};
+use crate::tasks_today;
 
 fn checkbox_re() -> Regex {
     Regex::new(r"^(\s*)([-*+])\s+\[([ xX])\](\s+)(.*)$").expect("checkbox regex")
@@ -108,6 +110,7 @@ pub fn parse_todos(content: &str) -> Vec<TodoItem> {
             text,
             depth,
             parent_line,
+            source_note: None,
         });
     }
     todos
@@ -127,6 +130,33 @@ pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultEr
     };
     let exists = path.exists();
     let mut snap = Snapshot::ok(date_str, path_str, exists, todos);
+    if exists {
+        // A dataview failure degrades to no external todos rather than
+        // taking the whole widget down; the daily-note view stays healthy.
+        if let Ok(content) = fs::read_to_string(&path) {
+            let external = dataview::collect_external_todos(vault, &content).unwrap_or_default();
+            snap.dataview_open_count = Some(external.iter().filter(|t| !t.item.checked).count());
+            snap.dataview_done_count = Some(external.iter().filter(|t| t.item.checked).count());
+            if !external.is_empty() {
+                snap.dataview_todos = Some(
+                    external
+                        .into_iter()
+                        .map(|t| TodoItem {
+                            source_note: Some(t.source_note),
+                            ..t.item
+                        })
+                        .collect(),
+                );
+            }
+        }
+        // Tasks `happens on <date>` scan (e.g. `path includes Routines`) — also degraded on error.
+        let today = tasks_today::collect_today_todos(vault, date, &path).unwrap_or_default();
+        snap.tasks_today_open_count = Some(today.iter().filter(|t| !t.item.checked).count());
+        snap.tasks_today_done_count = Some(today.iter().filter(|t| t.item.checked).count());
+        if !today.is_empty() {
+            snap.tasks_today_todos = Some(today.into_iter().map(|t| t.item).collect());
+        }
+    }
     enrich_snapshot(vault, date, &path, &mut snap)?;
     Ok(snap)
 }
@@ -401,13 +431,71 @@ pub fn toggle_todo(
     }
     let config = vault.daily_notes_config()?;
     let path = vault.daily_note_path(&config, date)?;
+    toggle_todo_at_path(vault, &path, line, expect_text, date)
+}
+
+/// Toggle a checkbox in an arbitrary vault file (e.g. `Routines.md`).
+pub fn toggle_todo_in_file(
+    vault: &Vault,
+    file: &str,
+    line: usize,
+    expect_text: Option<&str>,
+    date_for_snapshot: NaiveDate,
+) -> Result<Snapshot, VaultError> {
+    if line == 0 {
+        return Err(VaultError::Io("line must be >= 1".into()));
+    }
+    let rel = crate::config::sanitize_rel(file.trim().trim_start_matches('/').to_string());
+    if rel.is_empty() {
+        return Err(VaultError::Io("file path is empty".into()));
+    }
+    let mut path = vault.root.clone();
+    for part in rel.split('/') {
+        crate::config::push_safe_component(&mut path, part)?;
+    }
+    if path.extension().is_none() {
+        path.set_extension("md");
+    }
+    crate::config::ensure_under_root(&vault.root, &path)?;
+    toggle_todo_at_path(vault, &path, line, expect_text, date_for_snapshot)
+}
+
+fn toggle_todo_at_path(
+    vault: &Vault,
+    path: &Path,
+    line: usize,
+    expect_text: Option<&str>,
+    date_for_snapshot: NaiveDate,
+) -> Result<Snapshot, VaultError> {
     if !path.exists() {
         return Err(VaultError::Io(format!(
-            "daily note does not exist: {}",
+            "file does not exist: {}",
             path.display()
         )));
     }
-    let content = fs::read_to_string(&path)
+    // Ensure the resolved path stays inside vault (symlink escapes).
+    crate::config::ensure_under_root(&vault.root, path)?;
+    // Also verify parent resolves inside vault for symlink-dir attacks.
+    let parent = path.parent().unwrap_or(path);
+    if parent.exists() {
+        let real_parent = parent
+            .canonicalize()
+            .map_err(|e| VaultError::Io(format!("failed to resolve {}: {e}", parent.display())))?;
+        let root = vault.root.canonicalize().map_err(|e| {
+            VaultError::Io(format!(
+                "failed to resolve vault root {}: {e}",
+                vault.root.display()
+            ))
+        })?;
+        if !real_parent.starts_with(&root) {
+            return Err(VaultError::Io(format!(
+                "refusing to write outside the vault: {} resolves to {}",
+                parent.display(),
+                real_parent.display()
+            )));
+        }
+    }
+    let content = fs::read_to_string(path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     if let Some(expected) = expect_text.map(str::trim).filter(|t| !t.is_empty()) {
         let at_line = parse_todos(&content)
@@ -431,8 +519,8 @@ pub fn toggle_todo(
         }
     }
     let next = toggle_line(&content, line)?;
-    write_atomic(vault.root(), &path, &next)?;
-    read_snapshot(vault, date)
+    write_atomic(vault.root(), path, &next)?;
+    read_snapshot(vault, date_for_snapshot)
 }
 
 fn insert_todo_lines(content: &str, items: &[String]) -> String {
@@ -596,6 +684,11 @@ fn temp_path_for(target: &Path) -> PathBuf {
 fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), VaultError> {
     let target = resolve_note_target(vault_root, path)?;
     let tmp = temp_path_for(&target);
+    // Ensure parent exists (Obsidian may have just created the file and the
+    // parent was canonicalized above, but a race can leave it missing).
+    if let Some(parent) = tmp.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let write_result = (|| {
         // `create_new` is O_CREAT|O_EXCL: it fails if anything — including a
         // symlink — already sits at the temp path, so a pre-created link
@@ -624,10 +717,84 @@ fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), Vau
     if let Ok(meta) = fs::metadata(&target) {
         let _ = fs::set_permissions(&tmp, meta.permissions());
     }
-    fs::rename(&tmp, &target).map_err(|e| {
+    if let Err(e) = fs::rename(&tmp, &target) {
         let _ = fs::remove_file(&tmp);
-        VaultError::Io(format!("failed to replace {}: {e}", target.display()))
-    })?;
+        // If Obsidian just replaced the target between our resolve and rename
+        // (ENOENT or busy), retry. If the file already contains the toggled
+        // line (stale-view race where Obsidian's autosave already flipped the
+        // same checkbox), treat as success so the bar doesn't show a spurious
+        // "Failed to rename" toast while the toggle still worked (hit-and-miss
+        // you reported for both Daily and Routines).
+        let msg = e.to_string();
+        let is_enoent = msg.contains("No such file")
+            || msg.contains("Device or resource busy")
+            || msg.contains("ENOENT");
+        // Helper: does the file on disk already have the expected toggled
+        // state for the line we tried to flip? If so, suppress the error.
+        let already_toggled = |p: &Path| -> bool {
+            if let Ok(cur) = fs::read_to_string(p) {
+                if cur == content {
+                    return true;
+                }
+            }
+            false
+        };
+        if is_enoent && (already_toggled(&target) || already_toggled(path)) {
+            return Ok(());
+        }
+        if is_enoent {
+            for attempt in 0..3 {
+                std::thread::sleep(std::time::Duration::from_millis(80 + attempt * 40));
+                let target2 = match resolve_note_target(vault_root, path) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if already_toggled(&target2) {
+                    return Ok(());
+                }
+                let tmp2 = temp_path_for(&target2);
+                if let Some(p) = tmp2.parent() {
+                    let _ = fs::create_dir_all(p);
+                }
+                let mut file = match fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp2)
+                {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
+                if file.write_all(content.as_bytes()).is_err() {
+                    let _ = fs::remove_file(&tmp2);
+                    continue;
+                }
+                let _ = file.sync_all();
+                #[cfg(unix)]
+                if let Ok(meta) = fs::metadata(&target2) {
+                    let _ = fs::set_permissions(&tmp2, meta.permissions());
+                }
+                match fs::rename(&tmp2, &target2) {
+                    Ok(()) => return Ok(()),
+                    Err(e2) => {
+                        let _ = fs::remove_file(&tmp2);
+                        if already_toggled(&target2) {
+                            return Ok(());
+                        }
+                        if attempt == 2 {
+                            return Err(VaultError::Io(format!(
+                                "failed to replace {}: {e2} (orig: {e})",
+                                target2.display()
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        return Err(VaultError::Io(format!(
+            "failed to replace {}: {e}",
+            target.display()
+        )));
+    }
     Ok(())
 }
 

@@ -23,6 +23,10 @@ pub struct TodoItem {
     /// (the parent), if any.
     #[serde(rename = "parentLine", skip_serializing_if = "Option::is_none")]
     pub parent_line: Option<usize>,
+    /// Vault-relative path of the note a dataview-derived todo lives in;
+    /// None for todos from the daily note itself.
+    #[serde(rename = "sourceNote", skip_serializing_if = "Option::is_none")]
+    pub source_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -46,6 +50,27 @@ pub struct Snapshot {
     /// Open todos on the previous calendar day (for carry-over UI).
     #[serde(rename = "carryOverCount", skip_serializing_if = "Option::is_none")]
     pub carry_over_count: Option<usize>,
+    /// Todos matching ```dataview TASK queries in the daily note, living in
+    /// other notes (`sourceNote` set on each item).
+    #[serde(rename = "dataviewTodos", skip_serializing_if = "Option::is_none")]
+    pub dataview_todos: Option<Vec<TodoItem>>,
+    #[serde(rename = "dataviewOpenCount", skip_serializing_if = "Option::is_none")]
+    pub dataview_open_count: Option<usize>,
+    #[serde(rename = "dataviewDoneCount", skip_serializing_if = "Option::is_none")]
+    pub dataview_done_count: Option<usize>,
+    /// Read-only Tasks `happens on <panel date>` todos (e.g. `path includes Routines`).
+    #[serde(rename = "tasksTodayTodos", skip_serializing_if = "Option::is_none")]
+    pub tasks_today_todos: Option<Vec<TodoItem>>,
+    #[serde(
+        rename = "tasksTodayOpenCount",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tasks_today_open_count: Option<usize>,
+    #[serde(
+        rename = "tasksTodayDoneCount",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tasks_today_done_count: Option<usize>,
     #[serde(rename = "isToday", skip_serializing_if = "Option::is_none")]
     pub is_today: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,6 +89,12 @@ impl Snapshot {
             todos: None,
             obsidian_uri: None,
             carry_over_count: None,
+            dataview_todos: None,
+            dataview_open_count: None,
+            dataview_done_count: None,
+            tasks_today_todos: None,
+            tasks_today_open_count: None,
+            tasks_today_done_count: None,
             is_today: None,
             error: Some(message.into()),
         }
@@ -82,6 +113,12 @@ impl Snapshot {
             todos: Some(todos),
             obsidian_uri: None,
             carry_over_count: None,
+            dataview_todos: None,
+            dataview_open_count: None,
+            dataview_done_count: None,
+            tasks_today_todos: None,
+            tasks_today_open_count: None,
+            tasks_today_done_count: None,
             is_today: None,
             error: None,
         }
@@ -104,6 +141,7 @@ mod tests {
                 text: "Ship".into(),
                 depth: 0,
                 parent_line: None,
+                source_note: None,
             }],
         );
         let json = serde_json::to_value(&snap).unwrap();
@@ -126,6 +164,7 @@ mod tests {
                     text: "Parent".into(),
                     depth: 0,
                     parent_line: None,
+                    source_note: None,
                 },
                 TodoItem {
                     line: 4,
@@ -133,6 +172,7 @@ mod tests {
                     text: "Child".into(),
                     depth: 1,
                     parent_line: Some(3),
+                    source_note: None,
                 },
             ],
         );

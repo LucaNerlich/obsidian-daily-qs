@@ -31,6 +31,8 @@ Panel {
   readonly property int openCount: hasWatcher ? Number(watcher.viewOpenCount || 0) : 0
   readonly property int doneCount: hasWatcher ? Number(watcher.viewDoneCount || 0) : 0
   readonly property var todos: hasWatcher ? (watcher.viewTodos || []) : []
+  readonly property var tasksTodayTodos: hasWatcher ? (watcher.viewTasksTodayTodos || []) : []
+  readonly property var dataviewTodos: hasWatcher ? (watcher.viewDataviewTodos || []) : []
   readonly property string error: hasWatcher ? String(watcher.viewError || "") : ""
   readonly property int carryOverCount: hasWatcher ? Number(watcher.viewCarryOverCount || 0) : 0
   readonly property bool isToday: hasWatcher ? watcher.viewIsToday === true : true
@@ -42,6 +44,8 @@ Panel {
     openCount: root.openCount,
     doneCount: root.doneCount,
     todos: root.todos,
+    tasksTodayTodos: root.tasksTodayTodos,
+    dataviewTodos: root.dataviewTodos,
     error: root.error,
     carryOverCount: root.carryOverCount,
     isToday: root.isToday
@@ -354,6 +358,130 @@ Panel {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.toggleTodo(modelData.line, modelData.text)
+                }
+              }
+            }
+          }
+
+          // Read-only Tasks `happens on` todos (e.g. Routines) — badged with source note
+          Text {
+            width: parent.width
+            visible: root.tasksTodayTodos.length > 0 || root.dataviewTodos.length > 0
+            text: "Today from vault"
+            textFormat: Text.PlainText
+            color: Qt.darker(root.foreground, 1.3)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            topPadding: Style.space(8)
+          }
+
+          Repeater {
+            model: root.tasksTodayTodos
+            delegate: RowLayout {
+              width: column.width
+              spacing: Style.space(8)
+              Item { Layout.preferredWidth: (modelData.depth || 0) * Style.space(16); Layout.preferredHeight: 1 }
+              Text {
+                text: modelData.checked ? "\u2611" : "\u2610"
+                textFormat: Text.PlainText
+                color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    if (hostWidget && typeof hostWidget.toggleFile === "function")
+                      hostWidget.toggleFile(modelData.sourceNote, modelData.line, modelData.text)
+                  }
+                }
+              }
+              ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Text {
+                  Layout.fillWidth: true
+                  text: modelData.text
+                  textFormat: Text.PlainText
+                  color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.strikeout: modelData.checked === true
+                  elide: Text.ElideRight
+                  wrapMode: Text.NoWrap
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                      if (hostWidget && typeof hostWidget.toggleFile === "function")
+                        hostWidget.toggleFile(modelData.sourceNote, modelData.line, modelData.text)
+                    }
+                  }
+                }
+                Text {
+                  visible: modelData.sourceNote && modelData.sourceNote.length > 0
+                  text: modelData.sourceNote
+                  textFormat: Text.PlainText
+                  color: Qt.darker(root.foreground, 1.5)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+              }
+            }
+          }
+
+          Repeater {
+            model: root.dataviewTodos
+            delegate: RowLayout {
+              width: column.width
+              spacing: Style.space(8)
+              Item { Layout.preferredWidth: (modelData.depth || 0) * Style.space(16); Layout.preferredHeight: 1 }
+              Text {
+                text: modelData.checked ? "\u2611" : "\u2610"
+                textFormat: Text.PlainText
+                color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    if (hostWidget && typeof hostWidget.toggleFile === "function")
+                      hostWidget.toggleFile(modelData.sourceNote, modelData.line, modelData.text)
+                  }
+                }
+              }
+              ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Text {
+                  Layout.fillWidth: true
+                  text: modelData.text
+                  textFormat: Text.PlainText
+                  color: modelData.checked ? Qt.darker(root.foreground, 1.5) : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.strikeout: modelData.checked === true
+                  elide: Text.ElideRight
+                  wrapMode: Text.NoWrap
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                      if (hostWidget && typeof hostWidget.toggleFile === "function")
+                        hostWidget.toggleFile(modelData.sourceNote, modelData.line, modelData.text)
+                    }
+                  }
+                }
+                Text {
+                  visible: modelData.sourceNote && modelData.sourceNote.length > 0
+                  text: modelData.sourceNote
+                  textFormat: Text.PlainText
+                  color: Qt.darker(root.foreground, 1.5)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
                 }
               }
             }

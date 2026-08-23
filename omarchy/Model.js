@@ -52,10 +52,38 @@ function parseLine(line) {
         checked: item.checked === true,
         text: safeTodoText(item.text),
         depth: Math.min(32, Math.floor(depth)),
-        parentLine: parentLine
+        parentLine: parentLine,
+        sourceNote: safeText(item.sourceNote)
       });
     }
   }
+
+  function parseExternal(list) {
+    var out = [];
+    if (!Array.isArray(list)) return out;
+    for (var k = 0; k < list.length; k++) {
+      var e = list[k];
+      if (!e || typeof e !== "object") continue;
+      var ln = Number(e.line);
+      if (!isFinite(ln) || ln < 1) continue;
+      var d = Number(e.depth);
+      if (!isFinite(d) || d < 0) d = 0;
+      var p = null;
+      if (typeof e.parentLine === "number" && isFinite(e.parentLine) && e.parentLine >= 1) p = Math.floor(e.parentLine);
+      out.push({
+        line: Math.floor(ln),
+        checked: e.checked === true,
+        text: safeTodoText(e.text),
+        depth: Math.min(32, Math.floor(d)),
+        parentLine: p,
+        sourceNote: safeText(e.sourceNote)
+      });
+    }
+    return out;
+  }
+
+  var dataviewTodos = parseExternal(parsed.dataviewTodos);
+  var tasksTodayTodos = parseExternal(parsed.tasksTodayTodos);
 
   var openCount = typeof parsed.openCount === "number" && isFinite(parsed.openCount)
     ? Math.max(0, Math.floor(parsed.openCount))
@@ -66,6 +94,10 @@ function parseLine(line) {
   var carryOverCount = typeof parsed.carryOverCount === "number" && isFinite(parsed.carryOverCount)
     ? Math.max(0, Math.floor(parsed.carryOverCount))
     : 0;
+  var dataviewOpenCount = typeof parsed.dataviewOpenCount === "number" && isFinite(parsed.dataviewOpenCount) ? Math.max(0, Math.floor(parsed.dataviewOpenCount)) : dataviewTodos.filter(function(t){return !t.checked;}).length;
+  var dataviewDoneCount = typeof parsed.dataviewDoneCount === "number" && isFinite(parsed.dataviewDoneCount) ? Math.max(0, Math.floor(parsed.dataviewDoneCount)) : dataviewTodos.filter(function(t){return t.checked;}).length;
+  var tasksTodayOpenCount = typeof parsed.tasksTodayOpenCount === "number" && isFinite(parsed.tasksTodayOpenCount) ? Math.max(0, Math.floor(parsed.tasksTodayOpenCount)) : tasksTodayTodos.filter(function(t){return !t.checked;}).length;
+  var tasksTodayDoneCount = typeof parsed.tasksTodayDoneCount === "number" && isFinite(parsed.tasksTodayDoneCount) ? Math.max(0, Math.floor(parsed.tasksTodayDoneCount)) : tasksTodayTodos.filter(function(t){return t.checked;}).length;
 
   return {
     state: "ok",
@@ -78,7 +110,13 @@ function parseLine(line) {
     obsidianUri: safeUri(parsed.obsidianUri),
     carryOverCount: carryOverCount,
     isToday: parsed.isToday === true,
-    error: ""
+    error: "",
+    dataviewTodos: dataviewTodos,
+    dataviewOpenCount: dataviewOpenCount,
+    dataviewDoneCount: dataviewDoneCount,
+    tasksTodayTodos: tasksTodayTodos,
+    tasksTodayOpenCount: tasksTodayOpenCount,
+    tasksTodayDoneCount: tasksTodayDoneCount
   };
 }
 
@@ -114,8 +152,11 @@ function labelText(status) {
   if (!status) return "\u2610 \u2026";
   if (status.state === "error") return "\u2610 !";
   if (!status.exists) return "\u2610 ·";
-  var total = status.doneCount + status.openCount;
-  return "\u2610 " + String(status.doneCount) + "/" + String(total);
+  var extraOpen = (status.tasksTodayOpenCount || 0) + (status.dataviewOpenCount || 0);
+  var extraDone = (status.tasksTodayDoneCount || 0) + (status.dataviewDoneCount || 0);
+  var total = status.doneCount + status.openCount + extraOpen + extraDone;
+  var done = status.doneCount + extraDone;
+  return "\u2610 " + String(done) + "/" + String(total);
 }
 
 function tooltipText(status) {
@@ -125,8 +166,11 @@ function tooltipText(status) {
   }
   var date = status.date || "today";
   if (!status.exists) return "Obsidian Daily — no note for " + date;
-  return "Obsidian Daily — " + status.doneCount + "/" + (status.doneCount + status.openCount)
-    + " done (" + date + ")";
+  var extraOpen = (status.tasksTodayOpenCount || 0) + (status.dataviewOpenCount || 0);
+  var extraDone = (status.tasksTodayDoneCount || 0) + (status.dataviewDoneCount || 0);
+  var done = status.doneCount + extraDone;
+  var total = status.doneCount + status.openCount + extraOpen + extraDone;
+  return "Obsidian Daily — " + done + "/" + total + " done (" + date + ")";
 }
 
 function metaLine(status) {

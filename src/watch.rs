@@ -98,6 +98,12 @@ mod tests {
             todos: Some(Vec::new()),
             obsidian_uri: None,
             carry_over_count: Some(carry),
+            dataview_todos: None,
+            dataview_open_count: None,
+            dataview_done_count: None,
+            tasks_today_todos: None,
+            tasks_today_open_count: None,
+            tasks_today_done_count: None,
             is_today: Some(true),
             error: None,
         }

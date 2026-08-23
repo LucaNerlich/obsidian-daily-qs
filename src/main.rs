@@ -9,7 +9,9 @@ use std::io::{self, Write};
 use obsidian_daily_qs::config::Vault;
 use obsidian_daily_qs::status::Snapshot;
 use obsidian_daily_qs::watch;
-use obsidian_daily_qs::{add_todo, carry_over, open_in_obsidian, read_snapshot, toggle_todo};
+use obsidian_daily_qs::{
+    add_todo, carry_over, open_in_obsidian, read_snapshot, toggle_todo, toggle_todo_in_file,
+};
 
 #[derive(Parser)]
 #[command(
@@ -54,6 +56,9 @@ enum Command {
         /// Calendar day `YYYY-MM-DD` (default: today)
         #[arg(long)]
         date: Option<String>,
+        /// Vault-relative file path to toggle in (e.g. `10-19_Personal/12-Health/Routines.md`); defaults to daily note
+        #[arg(long)]
+        file: Option<String>,
     },
     /// Copy yesterday's still-open todos into the target day
     CarryOver {
@@ -78,10 +83,17 @@ fn main() {
             line,
             expect_text,
             date,
-        } => emit(run(
-            |vault, d| toggle_todo(vault, d, line, expect_text.as_deref()),
-            date,
-        )),
+            file,
+        } => emit(match file {
+            Some(f) => run(
+                |vault, d| toggle_todo_in_file(vault, &f, line, expect_text.as_deref(), d),
+                date,
+            ),
+            None => run(
+                |vault, d| toggle_todo(vault, d, line, expect_text.as_deref()),
+                date,
+            ),
+        }),
         Command::CarryOver { date } => emit(run(carry_over, date)),
         Command::Open { date } => emit(run(open_in_obsidian, date)),
     }
