@@ -112,10 +112,10 @@ test("parseLine keeps todo text with markup characters", () => {
 });
 
 test("labelText done/total", () => {
-  assert.equal(Model.labelText(null), "\u2610 \u2026");
+  assert.equal(Model.labelText(null), "\u2026");
   assert.equal(
     Model.labelText({ state: "ok", exists: true, openCount: 3, doneCount: 1 }),
-    "\u2610 1/4",
+    "1/4",
   );
   assert.match(
     Model.tooltipText({

@@ -337,7 +337,10 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.labelText
+    text: ""
+    labelVisible: false
+    hasVisualContent: true
+    fixedWidth: vertical ? -1 : contentRow.implicitWidth + Style.space(16)
     foreground: root.statusState === "error" ? root.urgent : Color.bar.text
     activeColor: Color.bar.active
     active: root.statusState === "error"
@@ -346,6 +349,32 @@ BarWidget {
     tooltipText: root.tooltipText
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
+    }
+
+    readonly property color iconColor: button.active && button.useActiveColor
+      ? button.activeColor : button.foreground
+
+    Row {
+      id: contentRow
+      anchors.centerIn: parent
+      spacing: Style.space(5)
+
+      ObsidianIcon {
+        iconSize: Style.space(13)
+        anchors.verticalCenter: parent.verticalCenter
+        color: button.iconColor
+      }
+
+      Text {
+        visible: !(button.vertical)
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.labelText
+        textFormat: Text.PlainText
+        color: button.iconColor
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
     }
   }
 }

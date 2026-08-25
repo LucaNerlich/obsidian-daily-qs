@@ -110,12 +110,13 @@ function safeUri(value) {
   return value;
 }
 
+// Bar caption beside the Obsidian icon (icon itself lives in QML).
 function labelText(status) {
-  if (!status) return "\u2610 \u2026";
-  if (status.state === "error") return "\u2610 !";
-  if (!status.exists) return "\u2610 ·";
+  if (!status) return "\u2026";
+  if (status.state === "error") return "!";
+  if (!status.exists) return "\u00B7";
   var total = status.doneCount + status.openCount;
-  return "\u2610 " + String(status.doneCount) + "/" + String(total);
+  return String(status.doneCount) + "/" + String(total);
 }
 
 function tooltipText(status) {
