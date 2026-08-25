@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "luca.obsidian-daily",
   "name": "Obsidian Daily",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "author": "Luca Nerlich",
   "license": "Apache-2.0",
   "description": "View and manage Obsidian daily note todos from the Omarchy bar. Set vaultPath or OBSIDIAN_VAULT_ROOT.",
