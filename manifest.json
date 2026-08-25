@@ -5,7 +5,7 @@
   "version": "1.5.0",
   "author": "Luca Nerlich",
   "license": "Apache-2.0",
-  "description": "View and manage Obsidian daily note todos from the Omarchy bar. Requires OBSIDIAN_VAULT_ROOT.",
+  "description": "View and manage Obsidian daily note todos from the Omarchy bar. Set vaultPath or OBSIDIAN_VAULT_ROOT.",
   "kinds": ["bar-widget"],
   "activation": "on-demand",
   "entryPoints": {
@@ -18,14 +18,46 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "openOnly": false
+      "openOnly": false,
+      "vaultPath": "",
+      "todoHeading": "",
+      "hideWhenDone": false,
+      "hideWhenEmpty": false
     },
     "schema": [
+      {
+        "key": "vaultPath",
+        "type": "path",
+        "label": "Vault path",
+        "description": "Absolute path to the Obsidian vault. Overrides OBSIDIAN_VAULT_ROOT when set.",
+        "defaultValue": ""
+      },
       {
         "key": "openOnly",
         "type": "boolean",
         "label": "Open todos only",
         "description": "When the panel opens, hide completed checkboxes by default. Can still be toggled in the panel.",
+        "defaultValue": false
+      },
+      {
+        "key": "todoHeading",
+        "type": "string",
+        "label": "Todo heading",
+        "description": "Only show todos under this markdown heading (e.g. Todos or Tasks). Empty = all todos.",
+        "defaultValue": ""
+      },
+      {
+        "key": "hideWhenDone",
+        "type": "boolean",
+        "label": "Hide when done",
+        "description": "Conceal the bar widget when today's note has no open todos.",
+        "defaultValue": false
+      },
+      {
+        "key": "hideWhenEmpty",
+        "type": "boolean",
+        "label": "Hide when empty",
+        "description": "Conceal the bar widget when there is no note or no todos for today.",
         "defaultValue": false
       }
     ]

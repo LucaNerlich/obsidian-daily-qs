@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -9,20 +10,18 @@ use chrono::Local;
 
 use crate::config::Vault;
 use crate::status::Snapshot;
-use crate::todos::read_snapshot;
+use crate::todos::read_snapshot_filtered;
 
 const POLL: Duration = Duration::from_secs(1);
 
 /// Stream snapshots: one immediately, then whenever path/mtime/content changes.
-pub fn watch() {
+pub fn watch(cli_vault: Option<PathBuf>, heading: Option<String>) {
     let mut last_key: Option<String> = None;
     loop {
-        let snap = current_snapshot();
+        let snap = current_snapshot(cli_vault.clone(), heading.as_deref());
         let key = snapshot_key(&snap);
         if last_key.as_ref() != Some(&key) {
             if !emit(&snap) {
-                // Consumer is gone (shell crashed or exited without reaping
-                // us); keep polling would leak this process.
                 return;
             }
             last_key = Some(key);
@@ -31,33 +30,20 @@ pub fn watch() {
     }
 }
 
-pub fn current_snapshot() -> Snapshot {
-    match Vault::from_env() {
+pub fn current_snapshot(cli_vault: Option<PathBuf>, heading: Option<&str>) -> Snapshot {
+    match Vault::resolve(cli_vault) {
         Ok(vault) => {
             let date = Local::now().date_naive();
-            match read_snapshot(&vault, date) {
+            match read_snapshot_filtered(&vault, date, heading) {
                 Ok(snap) => snap,
-                Err(err) => Snapshot::error(err.to_string()),
+                Err(err) => Snapshot::error_with_code(err.to_string(), err.error_code()),
             }
         }
-        Err(err) => Snapshot::error(err.to_string()),
-    }
-}
-
-pub fn snapshot_for_date(date: chrono::NaiveDate) -> Snapshot {
-    match Vault::from_env() {
-        Ok(vault) => match read_snapshot(&vault, date) {
-            Ok(snap) => snap,
-            Err(err) => Snapshot::error(err.to_string()),
-        },
-        Err(err) => Snapshot::error(err.to_string()),
+        Err(err) => Snapshot::error_with_code(err.to_string(), err.error_code()),
     }
 }
 
 fn snapshot_key(snap: &Snapshot) -> String {
-    // The serialized body covers what mtime/len miss: same-size checkbox
-    // toggles on coarse-mtime filesystems and carryOverCount changes caused
-    // by edits to yesterday's note.
     let body = serde_json::to_string(snap).unwrap_or_default();
     if let (Some(path), Some(true)) = (snap.path.as_ref(), snap.exists) {
         let mtime = fs::metadata(path)
@@ -73,7 +59,6 @@ fn snapshot_key(snap: &Snapshot) -> String {
     }
 }
 
-/// Returns false when stdout is broken (EPIPE), so callers can exit.
 fn emit(snap: &Snapshot) -> bool {
     let line = serde_json::to_string(snap).expect("snapshot serializes");
     let mut out = io::stdout().lock();
@@ -99,14 +84,15 @@ mod tests {
             obsidian_uri: None,
             carry_over_count: Some(carry),
             is_today: Some(true),
+            template_name: None,
+            created_from_template: None,
+            error_code: None,
             error: None,
         }
     }
 
     #[test]
     fn key_changes_when_only_carry_over_count_changes() {
-        // The path does not exist, so mtime/len are constant here; the key
-        // must still differ when yesterday's open count changed.
         assert_ne!(
             snapshot_key(&snap_with_carry(0)),
             snapshot_key(&snap_with_carry(3))

@@ -71,6 +71,17 @@ pub fn parse_todos(content: &str) -> Vec<TodoItem> {
 }
 
 pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
+    read_snapshot_filtered(vault, date, None)
+}
+
+/// Like [`read_snapshot`], but when `heading` is set only todos under a
+/// matching markdown heading (until the next same-or-higher heading) are
+/// included.
+pub fn read_snapshot_filtered(
+    vault: &Vault,
+    date: NaiveDate,
+    heading: Option<&str>,
+) -> Result<Snapshot, VaultError> {
     let config = vault.daily_notes_config()?;
     let path = vault.daily_note_path(&config, date)?;
     let date_str = date.format("%Y-%m-%d").to_string();
@@ -78,20 +89,67 @@ pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultEr
     let todos = if path.exists() {
         let content = fs::read_to_string(&path)
             .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
-        parse_todos(&content)
+        let all = parse_todos(&content);
+        filter_todos_by_heading(&content, all, heading)
     } else {
         Vec::new()
     };
     let exists = path.exists();
     let mut snap = Snapshot::ok(date_str, path_str, exists, todos);
-    enrich_snapshot(vault, date, &path, &mut snap)?;
+    enrich_snapshot(vault, date, &path, &config, &mut snap)?;
     Ok(snap)
+}
+
+fn filter_todos_by_heading(
+    content: &str,
+    todos: Vec<TodoItem>,
+    heading: Option<&str>,
+) -> Vec<TodoItem> {
+    let Some(want) = heading.map(str::trim).filter(|s| !s.is_empty()) else {
+        return todos;
+    };
+    let want_l = want.to_lowercase();
+    let lines: Vec<&str> = content.lines().collect();
+    let heading_re = Regex::new(r"^(#{1,6})\s+(.+?)\s*$").expect("heading regex");
+    // Inclusive start / exclusive end as 1-based file line numbers.
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0usize;
+    while i < lines.len() {
+        if let Some(caps) = heading_re.captures(lines[i]) {
+            let level = caps[1].len();
+            let title = caps[2].trim().to_lowercase();
+            if title == want_l {
+                // Content under heading starts at the next line (1-based: i+2).
+                let start = i + 2;
+                let mut j = i + 1;
+                while j < lines.len() {
+                    if let Some(next) = heading_re.captures(lines[j]) {
+                        if next[1].len() <= level {
+                            break;
+                        }
+                    }
+                    j += 1;
+                }
+                // j is 0-based exclusive end index → 1-based exclusive = j+1
+                ranges.push((start, j + 1));
+            }
+        }
+        i += 1;
+    }
+    if ranges.is_empty() {
+        return Vec::new();
+    }
+    todos
+        .into_iter()
+        .filter(|t| ranges.iter().any(|(a, b)| t.line >= *a && t.line < *b))
+        .collect()
 }
 
 fn enrich_snapshot(
     vault: &Vault,
     date: NaiveDate,
     path: &Path,
+    config: &DailyNotesConfig,
     snap: &mut Snapshot,
 ) -> Result<(), VaultError> {
     snap.obsidian_uri = Some(open::open_uri(path));
@@ -99,6 +157,11 @@ fn enrich_snapshot(
     snap.is_today = Some(date == today);
     let prev = date.checked_sub_days(chrono::Days::new(1)).unwrap_or(date);
     snap.carry_over_count = Some(open_todo_count(vault, prev)?);
+    if let Some(name) = config.template.clone() {
+        snap.template_name = Some(name);
+        let has_template = vault.template_path(config).is_some_and(|p| p.exists());
+        snap.created_from_template = Some(has_template && path.exists());
+    }
     Ok(())
 }
 
@@ -296,9 +359,18 @@ fn expand_template(raw: &str, date: NaiveDate) -> String {
         .replace("{{time}}", "")
 }
 
-/// Append new open todos with the given nesting depths. Creates the note
-/// when missing.
+/// Append a new open todo. When `under_line` is set, nest one level under
+/// that todo and insert immediately after it.
 pub fn add_todo(vault: &Vault, date: NaiveDate, text: &str) -> Result<Snapshot, VaultError> {
+    add_todo_under(vault, date, text, None)
+}
+
+pub fn add_todo_under(
+    vault: &Vault,
+    date: NaiveDate,
+    text: &str,
+    under_line: Option<usize>,
+) -> Result<Snapshot, VaultError> {
     let text = text.trim();
     if text.is_empty() {
         return Err(VaultError::Io("todo text is empty".into()));
@@ -306,7 +378,43 @@ pub fn add_todo(vault: &Vault, date: NaiveDate, text: &str) -> Result<Snapshot, 
     if text.contains('\n') || text.contains('\r') {
         return Err(VaultError::Io("todo text must be a single line".into()));
     }
-    add_todo_lines(vault, date, &[(0, text.to_string())])?;
+    match under_line {
+        None => {
+            add_todo_lines(vault, date, &[(0, text.to_string())])?;
+        }
+        Some(parent_line) => {
+            if parent_line == 0 {
+                return Err(VaultError::Io("under-line must be >= 1".into()));
+            }
+            let config = vault.daily_notes_config()?;
+            let path = vault.daily_note_path(&config, date)?;
+            ensure_note(vault, &config, &path, date)?;
+            let content = fs::read_to_string(&path)
+                .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+            let todos = parse_todos(&content);
+            let parent = todos
+                .iter()
+                .find(|t| t.line == parent_line)
+                .ok_or_else(|| {
+                    VaultError::Io(format!("under-line {parent_line} is not a todo"))
+                })?;
+            let depth = parent.depth + 1;
+            let insert_at = parent_line; // insert after this 1-based line
+            let new_line = format!("{}- [ ] {}", "  ".repeat(depth), text);
+            let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+            if insert_at > lines.len() {
+                return Err(VaultError::Io(format!(
+                    "under-line {parent_line} is past end of file"
+                )));
+            }
+            lines.insert(insert_at, new_line);
+            let mut next = lines.join("\n");
+            if content.ends_with('\n') && !next.ends_with('\n') {
+                next.push('\n');
+            }
+            write_atomic_with_undo(vault, date, &path, &content, &next)?;
+        }
+    }
     read_snapshot(vault, date)
 }
 
@@ -327,8 +435,6 @@ fn add_todo_lines(
     let lines: Vec<String> = items
         .iter()
         .map(|(depth, text)| {
-            // The first inserted line has no carried ancestor, so orphaned
-            // children (parent checked / not carried) become top-level.
             let d = match prev_depth {
                 None => 0,
                 Some(p) => (*depth).min(p + 1),
@@ -338,15 +444,35 @@ fn add_todo_lines(
         })
         .collect();
     let next = insert_todo_lines(&content, &lines);
-    write_atomic(vault.root(), &path, &next)
+    write_atomic_with_undo(vault, date, &path, &content, &next)
+}
+
+fn expect_line_text(
+    content: &str,
+    line: usize,
+    expect_text: Option<&str>,
+) -> Result<(), VaultError> {
+    let Some(expected) = expect_text.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(());
+    };
+    let at_line = parse_todos(content)
+        .into_iter()
+        .find(|t| t.line == line)
+        .map(|t| t.text);
+    match at_line {
+        Some(actual) if actual.trim() == expected => Ok(()),
+        Some(actual) => Err(VaultError::Io(format!(
+            "stale view: line {line} now holds {:?} instead of {:?}; refetch and retry",
+            actual.trim(),
+            expected
+        ))),
+        None => Err(VaultError::Io(format!(
+            "stale view: line {line} is no longer a todo; refetch and retry"
+        ))),
+    }
 }
 
 /// Toggle the checkbox on the given 1-based line.
-///
-/// `expect_text` is the todo text the caller saw when rendering the row; if
-/// the note changed since the snapshot (Obsidian autosave, another device),
-/// the line no longer holds that text and the toggle is refused instead of
-/// flipping an unrelated checkbox.
 pub fn toggle_todo(
     vault: &Vault,
     date: NaiveDate,
@@ -366,30 +492,208 @@ pub fn toggle_todo(
     }
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
-    if let Some(expected) = expect_text.map(str::trim).filter(|t| !t.is_empty()) {
-        let at_line = parse_todos(&content)
-            .into_iter()
-            .find(|t| t.line == line)
-            .map(|t| t.text);
-        match at_line {
-            Some(actual) if actual.trim() == expected => {}
-            Some(actual) => {
-                return Err(VaultError::Io(format!(
-                    "stale view: line {line} now holds {:?} instead of {:?}; refetch and retry",
-                    actual.trim(),
-                    expected
-                )));
+    expect_line_text(&content, line, expect_text)?;
+    let next = toggle_line(&content, line)?;
+    write_atomic_with_undo(vault, date, &path, &content, &next)?;
+    read_snapshot(vault, date)
+}
+
+pub fn edit_todo(
+    vault: &Vault,
+    date: NaiveDate,
+    line: usize,
+    expect_text: Option<&str>,
+    new_text: &str,
+) -> Result<Snapshot, VaultError> {
+    if line == 0 {
+        return Err(VaultError::Io("line must be >= 1".into()));
+    }
+    let new_text = new_text.trim();
+    if new_text.is_empty() {
+        return Err(VaultError::Io("todo text is empty".into()));
+    }
+    if new_text.contains('\n') || new_text.contains('\r') {
+        return Err(VaultError::Io("todo text must be a single line".into()));
+    }
+    let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
+    if !path.exists() {
+        return Err(VaultError::Io(format!(
+            "daily note does not exist: {}",
+            path.display()
+        )));
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    expect_line_text(&content, line, expect_text)?;
+    let re = checkbox_re();
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let idx = line - 1;
+    if idx >= lines.len() {
+        return Err(VaultError::Io(format!("line {line} is past end of file")));
+    }
+    let caps = re
+        .captures(&lines[idx])
+        .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
+    lines[idx] = format!(
+        "{}{} [{}]{}{}",
+        &caps[1],
+        &caps[2],
+        &caps[3],
+        &caps[4],
+        new_text
+    );
+    let mut next = lines.join("\n");
+    if content.ends_with('\n') && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    write_atomic_with_undo(vault, date, &path, &content, &next)?;
+    read_snapshot(vault, date)
+}
+
+pub fn delete_todo(
+    vault: &Vault,
+    date: NaiveDate,
+    line: usize,
+    expect_text: Option<&str>,
+    with_children: bool,
+) -> Result<Snapshot, VaultError> {
+    if line == 0 {
+        return Err(VaultError::Io("line must be >= 1".into()));
+    }
+    let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
+    if !path.exists() {
+        return Err(VaultError::Io(format!(
+            "daily note does not exist: {}",
+            path.display()
+        )));
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    expect_line_text(&content, line, expect_text)?;
+    let todos = parse_todos(&content);
+    let target = todos
+        .iter()
+        .find(|t| t.line == line)
+        .ok_or_else(|| VaultError::Io(format!("line {line} is not a todo")))?;
+    let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    drop.insert(line);
+    if with_children {
+        let parent_depth = target.depth;
+        for t in todos.iter().skip_while(|t| t.line <= line) {
+            if t.depth <= parent_depth {
+                break;
             }
-            None => {
-                return Err(VaultError::Io(format!(
-                    "stale view: line {line} is no longer a todo; refetch and retry"
-                )));
-            }
+            drop.insert(t.line);
         }
     }
-    let next = toggle_line(&content, line)?;
-    write_atomic(vault.root(), &path, &next)?;
+    let kept: Vec<&str> = content
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| !drop.contains(&(i + 1)))
+        .map(|(_, line)| line)
+        .collect();
+    let mut next = kept.join("\n");
+    if content.ends_with('\n') && !next.is_empty() {
+        next.push('\n');
+    }
+    write_atomic_with_undo(vault, date, &path, &content, &next)?;
     read_snapshot(vault, date)
+}
+
+pub fn set_indent(
+    vault: &Vault,
+    date: NaiveDate,
+    line: usize,
+    expect_text: Option<&str>,
+    delta: i32,
+) -> Result<Snapshot, VaultError> {
+    if line == 0 {
+        return Err(VaultError::Io("line must be >= 1".into()));
+    }
+    if delta == 0 {
+        return read_snapshot(vault, date);
+    }
+    let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
+    if !path.exists() {
+        return Err(VaultError::Io(format!(
+            "daily note does not exist: {}",
+            path.display()
+        )));
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    expect_line_text(&content, line, expect_text)?;
+    let re = checkbox_re();
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let idx = line - 1;
+    if idx >= lines.len() {
+        return Err(VaultError::Io(format!("line {line} is past end of file")));
+    }
+    let caps = re
+        .captures(&lines[idx])
+        .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
+    let mut level = indent_level(&caps[1]) as i32;
+    level = (level + delta).max(0);
+    let indent = "  ".repeat(level as usize);
+    lines[idx] = format!(
+        "{}{} [{}]{}{}",
+        indent, &caps[2], &caps[3], &caps[4], &caps[5]
+    );
+    let mut next = lines.join("\n");
+    if content.ends_with('\n') && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    write_atomic_with_undo(vault, date, &path, &content, &next)?;
+    read_snapshot(vault, date)
+}
+
+pub fn week_summary(vault: &Vault, anchor: NaiveDate) -> Result<crate::status::WeekSummary, VaultError> {
+    use chrono::Datelike;
+    use crate::status::{DaySummary, WeekSummary};
+    let today = chrono::Local::now().date_naive();
+    let days_from_mon = anchor.weekday().num_days_from_monday();
+    let monday = anchor
+        .checked_sub_days(chrono::Days::new(days_from_mon as u64))
+        .unwrap_or(anchor);
+    let mut days = Vec::with_capacity(7);
+    for offset in 0..7u64 {
+        let d = monday
+            .checked_add_days(chrono::Days::new(offset))
+            .unwrap_or(monday);
+        let snap = read_snapshot(vault, d)?;
+        days.push(DaySummary {
+            date: d.format("%Y-%m-%d").to_string(),
+            open_count: snap.open_count.unwrap_or(0),
+            done_count: snap.done_count.unwrap_or(0),
+            exists: snap.exists.unwrap_or(false),
+            is_today: d == today,
+        });
+    }
+    Ok(WeekSummary {
+        state: crate::status::State::Ok,
+        days: Some(days),
+        error_code: None,
+        error: None,
+    })
+}
+
+fn write_atomic_with_undo(
+    vault: &Vault,
+    date: NaiveDate,
+    path: &Path,
+    before: &str,
+    after: &str,
+) -> Result<(), VaultError> {
+    crate::undo::record_before(vault, date, path, before)?;
+    write_atomic(vault.root(), path, after)
+}
+
+/// Public wrapper used by the undo module to restore content.
+pub fn write_atomic_public(vault_root: &Path, path: &Path, content: &str) -> Result<(), VaultError> {
+    write_atomic(vault_root, path, content)
 }
 
 fn insert_todo_lines(content: &str, items: &[String]) -> String {

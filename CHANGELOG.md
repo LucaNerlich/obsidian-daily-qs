@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `vaultPath` bar setting and global `--vault` CLI flag (env `OBSIDIAN_VAULT_ROOT` remains a fallback).
+- Setup empty state in the panel when the vault path is missing or invalid.
+- Keyboard list cursor: j/k or arrows move, Enter/Space toggles, `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes.
+- Nested add via Shift+Enter (under the selected todo) and `--under-line` on `add`.
+- `edit`, `delete`, `indent`, `outdent`, `undo`, and `week` backend commands.
+- Week strip in the panel for jumping between days.
+- Optional `todoHeading` filter; `hideWhenDone` / `hideWhenEmpty` bar concealment.
+- Middle/right-click on the bar opens the note in Obsidian; progress cue on the icon.
+
 ## [1.5.0] - 2026-08-25
 
 ### Changed

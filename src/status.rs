@@ -48,12 +48,48 @@ pub struct Snapshot {
     pub carry_over_count: Option<usize>,
     #[serde(rename = "isToday", skip_serializing_if = "Option::is_none")]
     pub is_today: Option<bool>,
+    /// Relative template path from daily-notes.json when configured.
+    #[serde(rename = "templateName", skip_serializing_if = "Option::is_none")]
+    pub template_name: Option<String>,
+    /// True when a template is configured and the note exists.
+    #[serde(rename = "createdFromTemplate", skip_serializing_if = "Option::is_none")]
+    pub created_from_template: Option<bool>,
+    /// Machine-stable error class for UI empty states (`missing_vault`, …).
+    #[serde(rename = "errorCode", skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DaySummary {
+    pub date: String,
+    #[serde(rename = "openCount")]
+    pub open_count: usize,
+    #[serde(rename = "doneCount")]
+    pub done_count: usize,
+    pub exists: bool,
+    #[serde(rename = "isToday")]
+    pub is_today: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WeekSummary {
+    pub state: State,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days: Option<Vec<DaySummary>>,
+    #[serde(rename = "errorCode", skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 impl Snapshot {
     pub fn error(message: impl Into<String>) -> Self {
+        Self::error_with_code(message, "io")
+    }
+
+    pub fn error_with_code(message: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             state: State::Error,
             date: None,
@@ -65,6 +101,9 @@ impl Snapshot {
             obsidian_uri: None,
             carry_over_count: None,
             is_today: None,
+            template_name: None,
+            created_from_template: None,
+            error_code: Some(code.into()),
             error: Some(message.into()),
         }
     }
@@ -83,7 +122,21 @@ impl Snapshot {
             obsidian_uri: None,
             carry_over_count: None,
             is_today: None,
+            template_name: None,
+            created_from_template: None,
+            error_code: None,
             error: None,
+        }
+    }
+}
+
+impl WeekSummary {
+    pub fn error(message: impl Into<String>, code: impl Into<String>) -> Self {
+        Self {
+            state: State::Error,
+            days: None,
+            error_code: Some(code.into()),
+            error: Some(message.into()),
         }
     }
 }

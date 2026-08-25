@@ -58,8 +58,11 @@ pub enum VaultError {
 impl std::fmt::Display for VaultError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingEnv => write!(f, "{VAULT_ENV} is not set"),
-            Self::EmptyEnv => write!(f, "{VAULT_ENV} is empty"),
+            Self::MissingEnv => write!(
+                f,
+                "{VAULT_ENV} is not set (or pass --vault / set vaultPath in bar settings)"
+            ),
+            Self::EmptyEnv => write!(f, "vault path is empty"),
             Self::NotADirectory(p) => write!(f, "vault root is not a directory: {}", p.display()),
             Self::Io(msg) => write!(f, "{msg}"),
             Self::BadFormat(msg) => write!(f, "daily note format: {msg}"),
@@ -67,22 +70,44 @@ impl std::fmt::Display for VaultError {
     }
 }
 
+impl VaultError {
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::MissingEnv | Self::EmptyEnv => "missing_vault",
+            Self::NotADirectory(_) => "bad_vault",
+            Self::BadFormat(_) => "bad_format",
+            Self::Io(_) => "io",
+        }
+    }
+}
+
 impl Vault {
+    /// Resolve vault from an optional CLI `--vault` path, else `OBSIDIAN_VAULT_ROOT`.
+    pub fn resolve(cli_vault: Option<PathBuf>) -> Result<Self, VaultError> {
+        match cli_vault {
+            Some(path) => Self::from_path(path),
+            None => Self::from_env(),
+        }
+    }
+
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self, VaultError> {
+        let trimmed = path.as_ref().to_string_lossy();
+        let trimmed = trimmed.trim();
+        if trimmed.is_empty() {
+            return Err(VaultError::EmptyEnv);
+        }
+        let root = PathBuf::from(trimmed);
+        if !root.is_dir() {
+            return Err(VaultError::NotADirectory(root));
+        }
+        Ok(Self { root })
+    }
+
     pub fn from_env() -> Result<Self, VaultError> {
         match env::var(VAULT_ENV) {
             Err(env::VarError::NotPresent) => Err(VaultError::MissingEnv),
             Err(env::VarError::NotUnicode(_)) => Err(VaultError::EmptyEnv),
-            Ok(value) => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    return Err(VaultError::EmptyEnv);
-                }
-                let root = PathBuf::from(trimmed);
-                if !root.is_dir() {
-                    return Err(VaultError::NotADirectory(root));
-                }
-                Ok(Self { root })
-            }
+            Ok(value) => Self::from_path(value),
         }
     }
 

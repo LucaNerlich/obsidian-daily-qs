@@ -31,6 +31,9 @@ function parseLine(line) {
       obsidianUri: "",
       carryOverCount: 0,
       isToday: false,
+      templateName: "",
+      createdFromTemplate: false,
+      errorCode: safeText(parsed.errorCode) || "io",
       error: safeText(parsed.error)
     };
   }
@@ -78,14 +81,44 @@ function parseLine(line) {
     obsidianUri: safeUri(parsed.obsidianUri),
     carryOverCount: carryOverCount,
     isToday: parsed.isToday === true,
+    templateName: safeText(parsed.templateName),
+    createdFromTemplate: parsed.createdFromTemplate === true,
+    errorCode: "",
     error: ""
   };
 }
 
-// Qt Text defaults can treat a string that looks like HTML as rich text
-// (Text.AutoText). JSON from the helper (and PATH-fallback binary) is
-// untrusted from QML's point of view, so drop markup rather than let it
-// reach PanelHero / Text. Pair with textFormat: Text.PlainText in QML.
+/** Parse `week` command JSON. */
+function parseWeekLine(line) {
+  var text = String(line || "").trim();
+  if (text === "") return null;
+  var parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  if (String(parsed.state || "") === "error") {
+    return { state: "error", days: [], error: safeText(parsed.error) };
+  }
+  var days = [];
+  if (Array.isArray(parsed.days)) {
+    for (var i = 0; i < parsed.days.length; i++) {
+      var d = parsed.days[i];
+      if (!d || typeof d !== "object") continue;
+      days.push({
+        date: safeText(d.date),
+        openCount: Math.max(0, Math.floor(Number(d.openCount) || 0)),
+        doneCount: Math.max(0, Math.floor(Number(d.doneCount) || 0)),
+        exists: d.exists === true,
+        isToday: d.isToday === true
+      });
+    }
+  }
+  return { state: "ok", days: days, error: "" };
+}
+
 function safeText(value) {
   if (typeof value !== "string") return "";
   if (value.indexOf("<") !== -1 || value.indexOf(">") !== -1 || value.indexOf("&") !== -1)
@@ -93,10 +126,6 @@ function safeText(value) {
   return value;
 }
 
-// Todo text is only ever rendered with textFormat: Text.PlainText (todo rows
-// in Panel.qml), so markup is inert there. Strip control characters that
-// would break the single-line row, but keep everything else — URLs with `&`,
-// `<3` emoticons, and `->` arrows all survive.
 function safeTodoText(value) {
   if (typeof value !== "string") return "";
   return value.replace(/[\u0000-\u001f\u007f]/g, "");
@@ -110,13 +139,39 @@ function safeUri(value) {
   return value;
 }
 
-// Bar caption beside the Obsidian icon (icon itself lives in QML).
+function expandPath(path, home) {
+  var value = String(path || "").trim();
+  var homePath = String(home || "").trim();
+  if (value === "") return "";
+  if (value === "~") return homePath;
+  if (value.indexOf("~/") === 0) return homePath + value.substring(1);
+  if (value.indexOf("$HOME/") === 0) return homePath + value.substring(5);
+  if (value.charAt(0) !== "/" && homePath !== "") return homePath + "/" + value;
+  return value;
+}
+
 function labelText(status) {
   if (!status) return "\u2026";
   if (status.state === "error") return "!";
   if (!status.exists) return "\u00B7";
   var total = status.doneCount + status.openCount;
   return String(status.doneCount) + "/" + String(total);
+}
+
+function progressRatio(status) {
+  if (!status || status.state !== "ok" || !status.exists) return 0;
+  var total = status.doneCount + status.openCount;
+  if (total <= 0) return 1;
+  return status.doneCount / total;
+}
+
+function shouldConceal(status, hideWhenDone, hideWhenEmpty) {
+  if (!status || status.state === "error") return false;
+  if (hideWhenEmpty && (!status.exists || (status.openCount + status.doneCount) === 0))
+    return true;
+  if (hideWhenDone && status.exists && status.openCount === 0 && status.doneCount > 0)
+    return true;
+  return false;
 }
 
 function tooltipText(status) {
@@ -133,7 +188,11 @@ function tooltipText(status) {
 function metaLine(status) {
   if (!status) return "";
   if (status.state === "error") return status.error || "Error";
-  if (!status.exists) return "No daily note yet";
+  if (!status.exists) {
+    if (status.templateName)
+      return "No daily note yet · template " + status.templateName;
+    return "No daily note yet";
+  }
   return status.doneCount + "/" + (status.doneCount + status.openCount)
     + " done · " + status.openCount + " open";
 }
@@ -141,7 +200,12 @@ function metaLine(status) {
 function emptyMessage(status, openOnly, query) {
   if (!status) return "Loading…";
   if (status.state === "error") return status.error || "Unable to read vault";
-  if (!status.exists) return "No daily note for this day. Add a todo to create it.";
+  if (!status.exists) {
+    if (status.templateName)
+      return "No daily note for this day. Add a todo to create it from template "
+        + status.templateName + ".";
+    return "No daily note for this day. Add a todo to create it.";
+  }
   if (!status.todos || status.todos.length === 0) return "No todos in this note.";
   var q = String(query || "").trim();
   if (q !== "") return "No todos match \"" + q + "\".";
@@ -152,14 +216,12 @@ function emptyMessage(status, openOnly, query) {
   return "";
 }
 
-/**
- * Todos to show for the current filters (openOnly + text query).
- *
- * An item is shown when it passes the filters, plus its (possibly checked)
- * ancestors so nested context stays readable — a checked parent with a
- * matching or open descendant stays visible as their anchor. The query is a
- * case-insensitive substring match on the todo text.
- */
+function isVaultSetupError(status) {
+  if (!status || status.state !== "error") return false;
+  var code = String(status.errorCode || "");
+  return code === "missing_vault" || code === "bad_vault";
+}
+
 function visibleTodos(status, openOnly, query) {
   if (!status || !status.todos) return [];
 
@@ -173,7 +235,7 @@ function visibleTodos(status, openOnly, query) {
   var keep = {};
   function keepChain(line) {
     while (line && byLine[line]) {
-      if (keep[line] === true) return; // ancestor chain already kept
+      if (keep[line] === true) return;
       keep[line] = true;
       line = byLine[line].parentLine;
     }
@@ -189,7 +251,6 @@ function visibleTodos(status, openOnly, query) {
   return todos.filter(function(t) { return keep[t.line] === true; });
 }
 
-/** Shift YYYY-MM-DD by delta days. Returns "" on invalid input. */
 function shiftDate(dateStr, deltaDays) {
   var text = String(dateStr || "");
   var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
@@ -209,4 +270,16 @@ function todayIso() {
   var mo = d.getMonth() + 1;
   var day = d.getDate();
   return y + "-" + (mo < 10 ? "0" : "") + mo + "-" + (day < 10 ? "0" : "") + day;
+}
+
+function weekdayShort(dateStr) {
+  var text = String(dateStr || "");
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!m) return "";
+  var d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (isNaN(d.getTime())) return "";
+  var names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  // getUTCDay: 0=Sun … convert to Mon-first
+  var idx = (d.getUTCDay() + 6) % 7;
+  return names[idx];
 }

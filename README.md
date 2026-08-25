@@ -9,7 +9,7 @@ Omarchy Quattro bar widget for today's [Obsidian daily note](https://obsidian.md
 
 - Omarchy Quattro (Quickshell-based shell)
 - An Obsidian vault with the Daily notes core plugin configured
-- `OBSIDIAN_VAULT_ROOT` set to the absolute path of that vault for the graphical session — see [Set the vault path](#set-the-vault-path)
+- Vault path via the `vaultPath` bar setting **or** `OBSIDIAN_VAULT_ROOT` for the graphical session — see [Set the vault path](#set-the-vault-path)
 
 Daily note location and date format are read from `.obsidian/daily-notes.json` (`folder`, `format`, optional `template`), relative to the vault root.
 
@@ -40,7 +40,15 @@ The plugin bundles a statically linked x86_64 musl build of its backend (`omarch
 
 ### Set the vault path
 
-The backend reads `OBSIDIAN_VAULT_ROOT` from its process environment. The Omarchy shell runs as a child of Hyprland, so an `export` in `~/.bashrc` (or in a terminal) does **not** reach it. Set the variable for the graphical session instead:
+Prefer the bar setting (no Hyprland env needed):
+
+```bash
+omarchy bar set luca.obsidian-daily vaultPath '/home/you/Documents/notizen'
+```
+
+Or set it from the panel when the widget shows the setup empty state.
+
+The backend also accepts `--vault <path>` and still reads `OBSIDIAN_VAULT_ROOT` when `vaultPath` is empty. The Omarchy shell runs as a child of Hyprland, so an `export` in `~/.bashrc` does **not** reach it unless you also set the graphical session env:
 
 **Option A — Hyprland env** (per-session, applies without logging out):
 
@@ -53,44 +61,46 @@ hl.env("OBSIDIAN_VAULT_ROOT", "/home/you/Documents/notizen")
 hyprctl reload && omarchy restart shell
 ```
 
-**Option B — systemd user environment** (applies at next login, also covers apps launched via `uwsm-app`):
+**Option B — systemd user environment** (applies at next login):
 
 ```ini
 # ~/.config/environment.d/obsidian-vault.conf
 OBSIDIAN_VAULT_ROOT=/home/you/Documents/notizen
 ```
 
-Setting both keeps the current session working until the next login. Use `pgrep -f 'obsidian-daily-qs watch'` and `/proc/<pid>/environ` to verify the backend sees the variable.
-
 ## Usage
 
-- **Bar**: shows done/total for today (`☐ 2/5`). Left-click opens the panel with focus in the add field.
+- **Bar**: Obsidian mark + done/total for today. Left-click opens the panel; middle/right-click opens the note in Obsidian.
 - **Panel**:
-  - List todos; click a row to toggle.
-  - Nested todos (indented with tabs or two spaces per level in the note) render indented; the open-only filter keeps parents of open items visible.
-  - Scrolls vertically with the mouse wheel, scrollbar, or Up/Down/j/k (when not typing in the add field).
-  - Search: `/` focuses the search field (even from the empty add field); matches filter the list (ancestors stay visible) and combine with open-only. Esc clears and refocuses the add field, second Esc closes.
-  - Add with Enter / `+`.
-  - **Open only** / **All todos** toggles completed visibility (default from `openOnly` setting).
-  - **◀ / ● / ▶** move to previous day, today, or next day.
-  - **Carry over N** (when viewing today) moves yesterday's still-open todos into today (preserving nesting); the previous note keeps only its done todos.
-  - Open-in-Obsidian launches `obsidian://open?path=…` via `xdg-open`.
-- **Shell**: `omarchy-shell shell summon luca.obsidian-daily '{}'` / `omarchy-shell shell hide luca.obsidian-daily`.
+  - List todos; click or Enter/Space (with keyboard cursor) to toggle.
+  - Nested todos render indented; Shift+Enter adds under the selected row.
+  - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation.
+  - Week strip jumps between days; ◀ / ● / ▶ also navigate.
+  - Search: `/`; open-only toggle; carry over; open in Obsidian.
+- **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `openOnly`, `todoHeading`, `hideWhenDone`, `hideWhenEmpty`.
 
 ```bash
 omarchy bar set luca.obsidian-daily openOnly true
+omarchy bar set luca.obsidian-daily todoHeading Todos
 ```
 
 ## CLI
 
 ```bash
 export OBSIDIAN_VAULT_ROOT="/path/to/vault"
+# or: obsidian-daily-qs --vault /path/to/vault …
 obsidian-daily-qs status
-obsidian-daily-qs status --date 2026-08-19
+obsidian-daily-qs status --date 2026-08-19 --heading Todos
 obsidian-daily-qs watch
 obsidian-daily-qs add --text "Ship plugin"
-obsidian-daily-qs add --date 2026-08-19 --text "Backfill"
+obsidian-daily-qs add --text "Nested" --under-line 12
 obsidian-daily-qs toggle --line 12
+obsidian-daily-qs edit --line 12 --text "Renamed" --expect-text "Old"
+obsidian-daily-qs delete --line 12
+obsidian-daily-qs indent --line 12
+obsidian-daily-qs outdent --line 12
+obsidian-daily-qs undo
+obsidian-daily-qs week
 obsidian-daily-qs carry-over
 obsidian-daily-qs open
 ```
