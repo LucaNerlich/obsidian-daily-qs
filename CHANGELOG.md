@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-08-25
+
+### Changed
+
+- Bar label uses the Obsidian mark (theme-tinted PathSvg) beside the done/total
+  count instead of a checkbox glyph.
+- Panel layout matches other Quattro panels more closely: section separators,
+  Open-only toggle switch, hoverable todo rows, and custom checkboxes.
+
 ## [1.4.2] - 2026-08-22
 
 ### Fixed
