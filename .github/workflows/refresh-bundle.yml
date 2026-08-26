@@ -1,7 +1,7 @@
 name: Refresh marketplace bundle
 
-# Builds omarchy/bin on ubuntu-latest (same host as verify-bundle) and uploads
-# the ELF + hash + srcid as an artifact for commit. Does not push.
+# Builds omarchy/bin on native runners and uploads the ELFs + hashes + srcid as
+# an artifact for commit. Does not push.
 on:
   workflow_dispatch:
 
@@ -14,19 +14,27 @@ permissions:
 
 jobs:
   bundle:
-    name: build musl bundle artifact
-    runs-on: ubuntu-latest
+    name: build musl bundle artifact (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
         with:
-          targets: x86_64-unknown-linux-musl
+          targets: ${{ matrix.target }}
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: refresh-bundle-musl
+          key: refresh-bundle-${{ matrix.target }}
 
       - name: Build bundle
         run: scripts/build-bundle.sh
@@ -34,8 +42,10 @@ jobs:
       - name: Upload bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: omarchy-bin
+          name: omarchy-bin-${{ matrix.target }}
           path: |
-            omarchy/bin/obsidian-daily-qs
-            omarchy/bin/obsidian-daily-qs.sha256
+            omarchy/bin/obsidian-daily-qs-x86_64
+            omarchy/bin/obsidian-daily-qs-x86_64.sha256
+            omarchy/bin/obsidian-daily-qs-aarch64
+            omarchy/bin/obsidian-daily-qs-aarch64.sha256
             omarchy/bin/obsidian-daily-qs.srcid

@@ -152,7 +152,11 @@ function expandPath(path, home) {
 
 function labelText(status) {
   if (!status) return "\u2026";
-  if (status.state === "error") return "!";
+  if (status.state === "error") {
+    var code = String(status.errorCode || "");
+    if (code === "bad_arch" || code === "exec_error") return "\u26A0 arch";
+    return "!";
+  }
   if (!status.exists) return "\u00B7";
   var total = status.doneCount + status.openCount;
   return String(status.doneCount) + "/" + String(total);
@@ -177,7 +181,11 @@ function shouldConceal(status, hideWhenDone, hideWhenEmpty) {
 function tooltipText(status) {
   if (!status) return "Obsidian Daily";
   if (status.state === "error") {
-    return status.error ? ("Obsidian Daily — " + status.error) : "Obsidian Daily — error";
+    var suffix = status.error || "error";
+    var code = String(status.errorCode || "");
+    if (code === "bad_arch") suffix = "unsupported architecture: " + suffix;
+    else if (code === "exec_error") suffix = "backend cannot execute: " + suffix;
+    return "Obsidian Daily — " + suffix;
   }
   var date = status.date || "today";
   if (!status.exists) return "Obsidian Daily — no note for " + date;

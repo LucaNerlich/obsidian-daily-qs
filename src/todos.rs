@@ -395,9 +395,7 @@ pub fn add_todo_under(
             let parent = todos
                 .iter()
                 .find(|t| t.line == parent_line)
-                .ok_or_else(|| {
-                    VaultError::Io(format!("under-line {parent_line} is not a todo"))
-                })?;
+                .ok_or_else(|| VaultError::Io(format!("under-line {parent_line} is not a todo")))?;
             let depth = parent.depth + 1;
             let insert_at = parent_line; // insert after this 1-based line
             let new_line = format!("{}- [ ] {}", "  ".repeat(depth), text);
@@ -537,11 +535,7 @@ pub fn edit_todo(
         .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
     lines[idx] = format!(
         "{}{} [{}]{}{}",
-        &caps[1],
-        &caps[2],
-        &caps[3],
-        &caps[4],
-        new_text
+        &caps[1], &caps[2], &caps[3], &caps[4], new_text
     );
     let mut next = lines.join("\n");
     if content.ends_with('\n') && !next.ends_with('\n') {
@@ -650,9 +644,12 @@ pub fn set_indent(
     read_snapshot(vault, date)
 }
 
-pub fn week_summary(vault: &Vault, anchor: NaiveDate) -> Result<crate::status::WeekSummary, VaultError> {
-    use chrono::Datelike;
+pub fn week_summary(
+    vault: &Vault,
+    anchor: NaiveDate,
+) -> Result<crate::status::WeekSummary, VaultError> {
     use crate::status::{DaySummary, WeekSummary};
+    use chrono::Datelike;
     let today = chrono::Local::now().date_naive();
     let days_from_mon = anchor.weekday().num_days_from_monday();
     let monday = anchor
@@ -692,7 +689,11 @@ fn write_atomic_with_undo(
 }
 
 /// Public wrapper used by the undo module to restore content.
-pub fn write_atomic_public(vault_root: &Path, path: &Path, content: &str) -> Result<(), VaultError> {
+pub fn write_atomic_public(
+    vault_root: &Path,
+    path: &Path,
+    content: &str,
+) -> Result<(), VaultError> {
     write_atomic(vault_root, path, content)
 }
 
