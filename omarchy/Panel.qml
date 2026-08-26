@@ -23,6 +23,7 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.45)
   readonly property color accent: Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property real todoHoverOverflow: Style.space(6)
 
   property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
   property string searchText: ""
@@ -632,7 +633,9 @@ Panel {
         anchors.top: headerColumn.bottom
         anchors.topMargin: visible ? Style.space(8) : 0
         anchors.left: parent.left
+        anchors.leftMargin: -root.todoHoverOverflow
         anchors.right: parent.right
+        anchors.rightMargin: -root.todoHoverOverflow
         anchors.bottom: addTodoFooter.top
         anchors.bottomMargin: visible ? Style.space(12) : 0
         visible: !root.vaultSetupError
@@ -649,7 +652,8 @@ Panel {
           width: panelFlick.width
 
           Text {
-            width: parent.width
+            x: root.todoHoverOverflow
+            width: parent.width - root.todoHoverOverflow * 2
             visible: root.shownTodos.length === 0
             topPadding: Style.space(8)
             bottomPadding: Style.space(8)
@@ -664,7 +668,8 @@ Panel {
 
           Column {
             id: todoColumn
-            width: parent.width
+            x: root.todoHoverOverflow
+            width: parent.width - root.todoHoverOverflow * 2
             spacing: Style.space(4)
             visible: root.shownTodos.length > 0
 
@@ -677,7 +682,8 @@ Panel {
                     required property int index
                     property int todoIndex: index
                     property bool hovered: todoMouse.containsMouse
-                    width: todoColumn.width
+                    x: -root.todoHoverOverflow
+                    width: todoColumn.width + root.todoHoverOverflow * 2
                     implicitHeight: todoInner.implicitHeight + Style.space(8)
                     foreground: root.foreground
                     accent: root.accent
@@ -706,8 +712,9 @@ Panel {
                       anchors.left: parent.left
                       anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
-                      anchors.leftMargin: (modelData.depth || 0) * Style.space(14)
-                      anchors.rightMargin: Style.space(8)
+                      anchors.leftMargin: root.todoHoverOverflow
+                        + (modelData.depth || 0) * Style.space(14)
+                      anchors.rightMargin: root.todoHoverOverflow + Style.space(8)
                       spacing: Style.space(10)
 
                       BorderSurface {
