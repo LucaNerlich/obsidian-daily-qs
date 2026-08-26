@@ -562,6 +562,7 @@ Panel {
             RowLayout {
               width: parent.width
               spacing: Style.space(8)
+              visible: root.todos.length > 0
 
               PanelSectionHeader {
                 text: root.metaText
