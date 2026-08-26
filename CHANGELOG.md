@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-08-26
+
+### Added
+
+- Linux aarch64 (arm64) support: the bundled backend now ships as
+  per-architecture static musl binaries (`obsidian-daily-qs-x86_64`,
+  `obsidian-daily-qs-aarch64`), and the widget picks the one matching the
+  host CPU (via `uname -m`) at startup.
+
+### Changed
+
+- The todo capture field stays pinned below the scrolling list instead of
+  scrolling out of view, and a normal addition is appended at the end of the
+  Tasks/Todos section instead of the top.
+- Simplified the panel UI: header, search, summary, and the hide-done filter
+  stay fixed while only the todo list scrolls; search and the summary are
+  hidden for short or empty lists; removed separators and base row indentation
+  so hover backgrounds bleed into the panel inset.
+
+### Fixed
+
+- On an unsupported or misdetected architecture, or when the bundled backend
+  cannot execute, the bar now shows a clear `⚠ arch` state with an explanatory
+  tooltip instead of retrying forever; the PATH fallback now latches after
+  both candidates fail instead of oscillating.
+- Appending a todo under a heading whose section contains a fenced code block
+  no longer mistakes a heading-like line inside the fence (e.g. a shell or
+  Python comment) for the end of the section.
+- Clearing the search filter when it becomes unavailable (short todo list) no
+  longer strands keyboard focus on the now-hidden search field.
+
 ## [1.6.0] - 2026-08-25
 
 ### Added
