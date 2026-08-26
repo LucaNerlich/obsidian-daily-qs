@@ -9,12 +9,23 @@
 # tag-release workflow so a later release cannot skip any of those
 # attestations.
 #
-# Usage: scripts/verify-bundle.sh
+# Usage: scripts/verify-bundle.sh [target-triple]
+#   With no argument, verifies (and rebuilds) all supported targets (used by
+#   `make verify-bundle` and the tag Release workflow).
+#   With a target-triple argument, scopes both the fast inspect checks and the
+#   rebuild-and-compare to just that target (used by CI's per-target matrix,
+#   where each runner only has its own musl target's std installed — cross-
+#   building the other target there produced a non-reproducible mismatch).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-targets=("x86_64-unknown-linux-musl" "aarch64-unknown-linux-musl")
+all_targets=("x86_64-unknown-linux-musl" "aarch64-unknown-linux-musl")
+if [[ $# -gt 0 ]]; then
+  targets=("$1")
+else
+  targets=("${all_targets[@]}")
+fi
 bin_dir="$repo_root/omarchy/bin"
 
 fail() {

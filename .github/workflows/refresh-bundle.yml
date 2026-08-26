@@ -20,12 +20,14 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
+            arch: x86_64
             runner: ubuntu-latest
           - target: aarch64-unknown-linux-musl
+            arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
         with:
@@ -36,16 +38,16 @@ jobs:
         with:
           key: refresh-bundle-${{ matrix.target }}
 
+      # Only this job's own target: this runner only has that one target's
+      # std installed above.
       - name: Build bundle
-        run: scripts/build-bundle.sh
+        run: scripts/build-bundle.sh ${{ matrix.target }}
 
       - name: Upload bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: omarchy-bin-${{ matrix.target }}
           path: |
-            omarchy/bin/obsidian-daily-qs-x86_64
-            omarchy/bin/obsidian-daily-qs-x86_64.sha256
-            omarchy/bin/obsidian-daily-qs-aarch64
-            omarchy/bin/obsidian-daily-qs-aarch64.sha256
+            omarchy/bin/obsidian-daily-qs-${{ matrix.arch }}
+            omarchy/bin/obsidian-daily-qs-${{ matrix.arch }}.sha256
             omarchy/bin/obsidian-daily-qs.srcid

@@ -8,12 +8,22 @@
 # targets are linked with rust-lld so the build works on hosts that do not
 # have a native musl gcc cross toolchain installed.
 #
-# Usage: scripts/build-bundle.sh
+# Usage: scripts/build-bundle.sh [target-triple]
+#   With no argument, builds all supported targets (used by `make bundle`,
+#   where a local dev machine typically has both musl targets installed).
+#   With a target-triple argument, builds only that target (used by CI, where
+#   each matrix job only has its own musl target's std installed, and cross-
+#   building the other one there would produce a non-reproducible binary).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-targets=("x86_64-unknown-linux-musl" "aarch64-unknown-linux-musl")
+all_targets=("x86_64-unknown-linux-musl" "aarch64-unknown-linux-musl")
+if [[ $# -gt 0 ]]; then
+  targets=("$1")
+else
+  targets=("${all_targets[@]}")
+fi
 
 export RUSTFLAGS="${RUSTFLAGS:-} \
   --remap-path-prefix=${cargo_home}/registry/src=./registry/src \

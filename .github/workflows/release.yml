@@ -28,10 +28,10 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Inspect committed ELF
-        run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh
+        run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh ${{ matrix.target }}
 
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
         with:
@@ -41,15 +41,17 @@ jobs:
         with:
           key: release-verify-${{ matrix.target }}
 
+      # Only this job's own target: this runner only has that one target's
+      # std installed above.
       - name: Marketplace bundle checks
-        run: scripts/verify-bundle.sh
+        run: scripts/verify-bundle.sh ${{ matrix.target }}
 
   release:
     name: publish GitHub release
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Package committed ELFs
         run: scripts/package-release.sh

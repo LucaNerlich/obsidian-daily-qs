@@ -14,11 +14,46 @@ permissions:
   contents: read
 
 jobs:
+  # Cheap gate so QML/README/doc-only commits skip the expensive Rust jobs
+  # below. Uses a plain `git diff` instead of a third-party action to avoid
+  # adding another supply-chain dependency. Anything we can't compute a
+  # sensible diff base for (workflow_dispatch, first push, force-push) defaults
+  # to `true` so we never silently skip a check we're unsure about.
+  changes:
+    name: detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        run: |
+          base=""
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            base="${{ github.event.before }}"
+          fi
+          if [[ -z "$base" ]] || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" "${{ github.sha }}" | grep -qE '^(src/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|omarchy/bin/|scripts/.*\.sh$|\.github/workflows/ci\.yml$)'; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rust=false" >> "$GITHUB_OUTPUT"
+          fi
+
   linux:
     name: test (ubuntu-latest)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Match rust-toolchain.toml. `@stable` installs clippy/rustfmt on the
       # `stable` toolchain name, but the pin overrides cargo to `1.97.1`, which
@@ -38,14 +73,24 @@ jobs:
       - name: Test
         run: cargo test --all-targets --locked
 
+  # Split out from `linux` so omarchy/*.js changes still get checked even on
+  # commits that skip the Rust jobs above (it needs no Rust toolchain).
+  plugin-model-tests:
+    name: plugin model tests (Model.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Plugin model tests
         run: node omarchy/model.test.mjs
 
   msrv:
     name: test (rust 1.85)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: dtolnay/rust-toolchain@bc540ba06a4ccee415bb241490e0b25ee8e7d315 # 1.85.0
 
@@ -56,10 +101,11 @@ jobs:
       - name: Check declared minimum Rust version
         run: cargo check --all-targets --locked
 
-  # Independent of linux/msrv: marketplace review needs this job to run even
-  # if a prerequisite such as rustfmt is missing. A skipped verify cannot
-  # attest that the bundled ELF matches the reviewed source. Do not add
-  # `needs:` here. The tag Release workflow re-runs the same script.
+  # Independent of linux/msrv/changes: marketplace review needs this job to
+  # run on every commit, even one that only touches QML, and even if a
+  # prerequisite such as rustfmt is missing. A skipped verify cannot attest
+  # that the bundled ELF matches the reviewed source. Do not add `needs:`
+  # here. The tag Release workflow re-runs the same script.
   verify-bundle:
     name: marketplace bundle (inspectable, reproducible)
     strategy:
@@ -72,14 +118,14 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Inspect before installing the pinned toolchain so a rustup failure
       # cannot skip the non-stripped / recorded-hash / source-id attestation.
       # The source-id check catches a leftover ELF after a comment-only Rust
       # edit without waiting for the musl rebuild.
       - name: Inspect committed ELF
-        run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh
+        run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh ${{ matrix.target }}
 
       # Pin to the toolchain in rust-toolchain.toml so the check reproduces
       # the exact binary that was committed.
@@ -91,5 +137,10 @@ jobs:
         with:
           key: verify-bundle-${{ matrix.target }}
 
+      # Only rebuild this job's own target: each runner only has that one
+      # target's std installed above, and cross-building the other arch's
+      # target here is exactly what produced a mismatched, non-reproducible
+      # binary in practice (the cross-built output doesn't byte-match a
+      # native build of the same source).
       - name: Rebuild and compare byte-for-byte
-        run: scripts/verify-bundle.sh
+        run: scripts/verify-bundle.sh ${{ matrix.target }}
