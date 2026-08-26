@@ -16,9 +16,17 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: verify bundle and publish GitHub release
-    runs-on: ubuntu-latest
+  verify:
+    name: verify bundle (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -27,16 +35,23 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
         with:
-          targets: x86_64-unknown-linux-musl
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: release-verify-musl
+          key: release-verify-${{ matrix.target }}
 
       - name: Marketplace bundle checks
         run: scripts/verify-bundle.sh
 
-      - name: Package committed ELF
+  release:
+    name: publish GitHub release
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Package committed ELFs
         run: scripts/package-release.sh
 
       - name: Publish GitHub release
@@ -46,11 +61,14 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
-          asset="dist/obsidian-daily-qs-${version}-linux-x86_64.tar.gz"
+          x86_asset="dist/obsidian-daily-qs-${version}-linux-x86_64.tar.gz"
+          aarch64_asset="dist/obsidian-daily-qs-${version}-linux-aarch64.tar.gz"
           notes="$(scripts/changelog-notes.sh "$version")"
           {
             echo "$notes"
             echo
-            echo "Artifact: \`$(basename "$asset")\` (statically linked musl x86_64)."
+            echo "Artifacts:"
+            echo "- \`$(basename "$x86_asset")\` (statically linked musl x86_64)."
+            echo "- \`$(basename "$aarch64_asset")\` (statically linked musl aarch64)."
           } > /tmp/release-notes.md
-          gh release create "$tag" "$asset" --title "$tag" --notes-file /tmp/release-notes.md
+          gh release create "$tag" "$x86_asset" "$aarch64_asset" --title "$tag" --notes-file /tmp/release-notes.md

@@ -62,7 +62,15 @@ jobs:
   # `needs:` here. The tag Release workflow re-runs the same script.
   verify-bundle:
     name: marketplace bundle (inspectable, reproducible)
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -77,11 +85,11 @@ jobs:
       # the exact binary that was committed.
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
         with:
-          targets: x86_64-unknown-linux-musl
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: verify-bundle-musl
+          key: verify-bundle-${{ matrix.target }}
 
       - name: Rebuild and compare byte-for-byte
         run: scripts/verify-bundle.sh
