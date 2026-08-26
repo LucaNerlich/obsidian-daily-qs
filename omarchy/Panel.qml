@@ -329,8 +329,7 @@ Panel {
 
           PanelHero {
             width: parent.width
-            title: "Obsidian Daily"
-            meta: root.date !== "" ? root.date : "Daily note"
+            title: "Obsidian Daily\n" + (root.date !== "" ? root.date : "Daily note")
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -590,6 +589,7 @@ Panel {
                   topPadding: 0
                   bottomPadding: 0
                   Layout.alignment: Qt.AlignVCenter
+                  Layout.topMargin: 2
                   onToggled: root.openOnly = checked
 
                   indicator: BorderSurface {
