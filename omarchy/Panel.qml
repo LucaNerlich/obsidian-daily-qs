@@ -29,7 +29,7 @@ Panel {
   property int selectedIndex: -1
   property int editingLine: -1
   property string editingOriginal: ""
-  property bool revealNextAppendedTodo: false
+  property int pendingAppendCount: 0
 
   readonly property string statusState: hasWatcher ? String(watcher.viewStatusState || "ok") : "ok"
   readonly property string date: hasWatcher ? String(watcher.viewDate || "") : ""
@@ -81,7 +81,7 @@ Panel {
       underLine = root.selectedTodo.line
     if (underSelected !== true) {
       root.searchText = ""
-      root.revealNextAppendedTodo = true
+      root.pendingAppendCount += 1
     }
     watcher.addTodo(inputField.text, underLine)
     inputField.text = ""
@@ -241,8 +241,11 @@ Panel {
       }
       if (!stillThere) root.cancelEdit()
     }
-    if (root.revealNextAppendedTodo && root.shownTodos.length > 0) {
-      root.revealNextAppendedTodo = false
+  }
+
+  onTodosChanged: {
+    if (root.pendingAppendCount > 0 && root.shownTodos.length > 0) {
+      root.pendingAppendCount -= 1
       Qt.callLater(function() {
         root.selectedIndex = root.shownTodos.length - 1
         root.scrollSelectedIntoView()

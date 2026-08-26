@@ -702,6 +702,7 @@ fn insert_todo_lines(content: &str, items: &[String]) -> String {
     let any_heading = Regex::new(r"^(#{1,6})\s+.+?\s*$").expect("heading regex");
     let lines: Vec<&str> = content.lines().collect();
     let mut insert_at: Option<usize> = None;
+    let mut needs_boundary_blank = false;
     for (idx, line) in lines.iter().enumerate() {
         if heading.is_match(line) {
             let level = line.chars().take_while(|ch| *ch == '#').count();
@@ -729,6 +730,13 @@ fn insert_todo_lines(content: &str, items: &[String]) -> String {
                 && lines[section_start].trim().is_empty()
             {
                 at += 1;
+                // If the section contained only a single blank line, there is
+                // no remaining blank-line boundary after the insertion point;
+                // add one so the new todos stay separated from the next peer
+                // heading.
+                if at == section_end {
+                    needs_boundary_blank = true;
+                }
             }
             insert_at = Some(at);
             break;
@@ -740,6 +748,9 @@ fn insert_todo_lines(content: &str, items: &[String]) -> String {
         Some(at) => {
             for (offset, item) in items.iter().enumerate() {
                 out.insert(at + offset, item.clone());
+            }
+            if needs_boundary_blank {
+                out.insert(at + items.len(), String::new());
             }
         }
         None => {
@@ -1033,6 +1044,15 @@ mod tests {
             body,
             "# Day\n\n## Todos\n\n- [ ] first\n\n### Later\n\n- [ ] second\n- [ ] last\n\n## Notes\n"
         );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn preserves_blank_line_boundary_in_empty_section() {
+        let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n## Notes\n");
+        add_todo(&vault, date, "new one").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(body, "# Day\n\n## Todos\n\n- [ ] new one\n\n## Notes\n");
         let _ = fs::remove_dir_all(vault.root());
     }
 
