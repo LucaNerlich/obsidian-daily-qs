@@ -329,7 +329,8 @@ Panel {
 
           PanelHero {
             width: parent.width
-            title: "Obsidian Daily\n" + (root.date !== "" ? root.date : "Daily note")
+            title: "Obsidian Daily<br><font color=\"" + root.dim + "\">"
+              + (root.date !== "" ? root.date : "Daily note") + "</font>"
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -372,6 +373,7 @@ Panel {
                 PanelActionButton {
                   iconText: "\u2197"
                   tooltipText: "Open in Obsidian"
+                  y: 4
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.openInObsidian()
@@ -589,7 +591,7 @@ Panel {
                   topPadding: 0
                   bottomPadding: 0
                   Layout.alignment: Qt.AlignVCenter
-                  Layout.topMargin: 2
+                  Layout.topMargin: 4
                   onToggled: root.openOnly = checked
 
                   indicator: BorderSurface {
