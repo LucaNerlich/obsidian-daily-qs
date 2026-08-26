@@ -373,7 +373,7 @@ Panel {
                 PanelActionButton {
                   iconText: "\u2197"
                   tooltipText: "Open in Obsidian"
-                  y: 4
+                  y: 2
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.openInObsidian()
