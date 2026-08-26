@@ -27,9 +27,7 @@ fn undo_path() -> PathBuf {
     }
     let cache = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))
-        })
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     cache.join("obsidian-daily-qs").join("last-undo.json")
 }
@@ -49,7 +47,10 @@ pub fn record_before(
     let dest = undo_path();
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            VaultError::Io(format!("failed to create undo dir {}: {e}", parent.display()))
+            VaultError::Io(format!(
+                "failed to create undo dir {}: {e}",
+                parent.display()
+            ))
         })?;
     }
     let json = serde_json::to_string_pretty(&record)

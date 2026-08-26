@@ -52,7 +52,10 @@ pub struct Snapshot {
     #[serde(rename = "templateName", skip_serializing_if = "Option::is_none")]
     pub template_name: Option<String>,
     /// True when a template is configured and the note exists.
-    #[serde(rename = "createdFromTemplate", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "createdFromTemplate",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub created_from_template: Option<bool>,
     /// Machine-stable error class for UI empty states (`missing_vault`, …).
     #[serde(rename = "errorCode", skip_serializing_if = "Option::is_none")]

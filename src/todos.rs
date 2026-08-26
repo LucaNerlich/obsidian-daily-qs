@@ -395,9 +395,7 @@ pub fn add_todo_under(
             let parent = todos
                 .iter()
                 .find(|t| t.line == parent_line)
-                .ok_or_else(|| {
-                    VaultError::Io(format!("under-line {parent_line} is not a todo"))
-                })?;
+                .ok_or_else(|| VaultError::Io(format!("under-line {parent_line} is not a todo")))?;
             let depth = parent.depth + 1;
             let insert_at = parent_line; // insert after this 1-based line
             let new_line = format!("{}- [ ] {}", "  ".repeat(depth), text);
@@ -537,11 +535,7 @@ pub fn edit_todo(
         .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
     lines[idx] = format!(
         "{}{} [{}]{}{}",
-        &caps[1],
-        &caps[2],
-        &caps[3],
-        &caps[4],
-        new_text
+        &caps[1], &caps[2], &caps[3], &caps[4], new_text
     );
     let mut next = lines.join("\n");
     if content.ends_with('\n') && !next.ends_with('\n') {
@@ -650,9 +644,12 @@ pub fn set_indent(
     read_snapshot(vault, date)
 }
 
-pub fn week_summary(vault: &Vault, anchor: NaiveDate) -> Result<crate::status::WeekSummary, VaultError> {
-    use chrono::Datelike;
+pub fn week_summary(
+    vault: &Vault,
+    anchor: NaiveDate,
+) -> Result<crate::status::WeekSummary, VaultError> {
     use crate::status::{DaySummary, WeekSummary};
+    use chrono::Datelike;
     let today = chrono::Local::now().date_naive();
     let days_from_mon = anchor.weekday().num_days_from_monday();
     let monday = anchor
@@ -692,19 +689,45 @@ fn write_atomic_with_undo(
 }
 
 /// Public wrapper used by the undo module to restore content.
-pub fn write_atomic_public(vault_root: &Path, path: &Path, content: &str) -> Result<(), VaultError> {
+pub fn write_atomic_public(
+    vault_root: &Path,
+    path: &Path,
+    content: &str,
+) -> Result<(), VaultError> {
     write_atomic(vault_root, path, content)
 }
 
 fn insert_todo_lines(content: &str, items: &[String]) -> String {
     let heading = tasks_heading_re();
+    let any_heading = Regex::new(r"^(#{1,6})\s+.+?\s*$").expect("heading regex");
     let lines: Vec<&str> = content.lines().collect();
     let mut insert_at: Option<usize> = None;
     for (idx, line) in lines.iter().enumerate() {
         if heading.is_match(line) {
-            // Insert after the heading, skipping a single following blank line.
-            let mut at = idx + 1;
-            if at < lines.len() && lines[at].trim().is_empty() {
+            let level = line.chars().take_while(|ch| *ch == '#').count();
+            let section_start = idx + 1;
+            let mut section_end = section_start;
+            while section_end < lines.len() {
+                if let Some(next) = any_heading.captures(lines[section_end]) {
+                    if next[1].len() <= level {
+                        break;
+                    }
+                }
+                section_end += 1;
+            }
+
+            // Append after the section's existing content while keeping blank
+            // lines that separate it from the next peer heading.
+            let mut at = section_end;
+            while at > section_start && lines[at - 1].trim().is_empty() {
+                at -= 1;
+            }
+            // An otherwise-empty section conventionally keeps one blank line
+            // between its heading and first todo.
+            if at == section_start
+                && section_start < section_end
+                && lines[section_start].trim().is_empty()
+            {
                 at += 1;
             }
             insert_at = Some(at);
@@ -980,10 +1003,10 @@ mod tests {
         let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n- [ ] existing\n\n## Notes\n");
         add_todo(&vault, date, "new one").unwrap();
         let body = fs::read_to_string(&note).unwrap();
-        let lines: Vec<&str> = body.lines().collect();
-        let todos_idx = lines.iter().position(|l| *l == "## Todos").unwrap();
-        assert_eq!(lines[todos_idx + 2], "- [ ] new one");
-        assert!(lines.contains(&"- [ ] existing"));
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
         let _ = fs::remove_dir_all(vault.root());
     }
 
@@ -992,10 +1015,24 @@ mod tests {
         let (vault, date, note) = vault_with("# Day\n\n## Tasks\n\n- [ ] existing\n\n## Notes\n");
         add_todo(&vault, date, "new one").unwrap();
         let body = fs::read_to_string(&note).unwrap();
-        let lines: Vec<&str> = body.lines().collect();
-        let tasks_idx = lines.iter().position(|l| *l == "## Tasks").unwrap();
-        assert_eq!(lines[tasks_idx + 2], "- [ ] new one");
-        assert!(lines.contains(&"- [ ] existing"));
+        assert_eq!(
+            body,
+            "# Day\n\n## Tasks\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn appends_after_nested_content_in_todo_section() {
+        let (vault, date, note) = vault_with(
+            "# Day\n\n## Todos\n\n- [ ] first\n\n### Later\n\n- [ ] second\n\n## Notes\n",
+        );
+        add_todo(&vault, date, "last").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] first\n\n### Later\n\n- [ ] second\n- [ ] last\n\n## Notes\n"
+        );
         let _ = fs::remove_dir_all(vault.root());
     }
 
