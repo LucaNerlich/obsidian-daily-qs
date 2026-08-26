@@ -5,6 +5,8 @@
 
 Omarchy Quattro bar widget for today's [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes) todos: view open items, add new checkboxes, and toggle them from a bar panel.
 
+<img width="1108" height="1472" alt="preview" src="https://github.com/user-attachments/assets/91530fad-7796-4dfe-aebb-4eb24683d2b8" />
+
 ## Requirements
 
 - Omarchy Quattro (Quickshell-based shell) on Linux
