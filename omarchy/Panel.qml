@@ -657,7 +657,7 @@ Panel {
                       anchors.left: parent.left
                       anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
-                      anchors.leftMargin: Style.space(8) + (modelData.depth || 0) * Style.space(14)
+                      anchors.leftMargin: (modelData.depth || 0) * Style.space(14)
                       anchors.rightMargin: Style.space(8)
                       spacing: Style.space(10)
 
