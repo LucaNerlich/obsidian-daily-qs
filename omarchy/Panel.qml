@@ -588,11 +588,6 @@ Panel {
               }
             }
 
-            PanelSeparator {
-              width: parent.width
-              foreground: root.foreground
-            }
-
             Column {
               width: parent.width
               spacing: Style.space(8)
@@ -743,11 +738,6 @@ Panel {
         visible: !root.vaultSetupError
         height: visible ? implicitHeight : 0
         spacing: Style.space(8)
-
-        PanelSeparator {
-          width: parent.width
-          foreground: root.foreground
-        }
 
         RowLayout {
           width: parent.width
