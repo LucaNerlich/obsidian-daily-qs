@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Ship an unsuffixed `omarchy/bin/obsidian-daily-qs` shim that execs the
+  arch-matched ELF, so a hot-reloaded pre-1.7 widget (still looking for the
+  old binary name after `omarchy plugin update`) keeps working without an
+  immediate `omarchy restart shell`.
+
 ## [1.7.0] - 2026-08-26
 
 ### Added

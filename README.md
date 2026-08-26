@@ -37,7 +37,9 @@ omarchy plugin update luca.obsidian-daily
 omarchy plugin remove luca.obsidian-daily
 ```
 
-The plugin bundles statically linked musl builds of its backend for x86_64 and aarch64 (`omarchy/bin/obsidian-daily-qs-<arch>`). The widget picks the binary that matches the host CPU reported by `uname -m`. If the bundled binary for your architecture cannot start, the widget tries an `obsidian-daily-qs` binary on `PATH` once (`cargo install --path .`); if both fail, it latches to an error state instead of restarting forever. On unsupported architectures the bar shows `⚠ arch` with a tooltip explaining the problem.
+If the bar still shows an error right after an update, run `omarchy restart shell` once. Omarchy hot-reloads plugin QML in place; a full shell restart is the reliable way to drop a stale in-memory widget (for example after the 1.7 backend rename).
+
+The plugin bundles statically linked musl builds of its backend for x86_64 and aarch64 (`omarchy/bin/obsidian-daily-qs-<arch>`), plus an unsuffixed `omarchy/bin/obsidian-daily-qs` shim that execs the matching arch binary (so a hot-reloaded pre-1.7 widget keeps working). The widget prefers the arch-specific ELF via `uname -m`. If that cannot start, it tries `obsidian-daily-qs` on `PATH` once (`cargo install --path .`); if both fail, it latches to an error state instead of restarting forever. On unsupported architectures the bar shows `⚠ arch` with a tooltip explaining the problem.
 
 ### Set the vault path
 

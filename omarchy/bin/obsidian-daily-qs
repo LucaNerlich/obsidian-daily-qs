@@ -1,0 +1,19 @@
+#!/bin/sh
+# Compat shim for the pre-1.7 unsuffixed binary name.
+#
+# 1.7 renamed the bundled backend to obsidian-daily-qs-<arch>. Omarchy's plugin
+# hot-reload can leave the previous QML instance running against the new files,
+# so that instance still looks for this path. Exec the arch-matched ELF so
+# updates keep working without requiring `omarchy restart shell`.
+set -eu
+arch="$(uname -m)"
+dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+case "$arch" in
+x86_64 | aarch64)
+  exec "$dir/obsidian-daily-qs-$arch" "$@"
+  ;;
+*)
+  echo "obsidian-daily-qs: unsupported architecture: $arch" >&2
+  exit 1
+  ;;
+esac
