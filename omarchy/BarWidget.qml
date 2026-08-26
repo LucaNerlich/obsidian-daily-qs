@@ -20,16 +20,36 @@ BarWidget {
       return path
     }
   }
-  readonly property string bundledBinary: root.decodeFileUrl(
-    Qt.resolvedUrl("bin/obsidian-daily-qs").toString())
-  readonly property int fallbackThreshold: 2
-  property bool watchFallback: false
-  property bool actionFallback: false
-  property int watchFailures: 0
-  property int actionFailures: 0
-  readonly property string watchBinary: watchFallback ? "obsidian-daily-qs" : bundledBinary
-  readonly property string actionBinary: actionFallback ? "obsidian-daily-qs" : bundledBinary
+
+  // Architecture detection. Qt.platform.os gives the OS but not the CPU,
+  // so ask the kernel via uname(1) once at startup.
+  property string hostArch: ""
+  readonly property string bundledBinary: hostArch === "" ? "" : root.decodeFileUrl(
+    Qt.resolvedUrl("bin/obsidian-daily-qs-" + hostArch).toString())
+  readonly property bool archSupported: hostArch === "x86_64" || hostArch === "aarch64"
+
+  // Fallback latch: once both the bundled binary and the PATH binary have
+  // failed, stop restarting and surface the error. Reset only on a full
+  // widget reload (Component.onCompleted) so the bar is stable and noisy.
+  readonly property string fallbackBinary: "obsidian-daily-qs"
+  property bool watchFallbackFailed: false
+  property bool watchBundledFailed: false
+  property bool actionFallbackFailed: false
+  property bool actionBundledFailed: false
+  readonly property bool watchBinaryExhausted: watchBundledFailed && watchFallbackFailed
+  readonly property bool actionBinaryExhausted: actionBundledFailed && actionFallbackFailed
   property var pendingActionArgs: []
+
+  readonly property string watchBinary: {
+    if (!root.archSupported) return ""
+    if (root.watchBundledFailed && !root.watchFallbackFailed) return root.fallbackBinary
+    return root.bundledBinary
+  }
+  readonly property string actionBinary: {
+    if (!root.archSupported) return ""
+    if (root.actionBundledFailed && !root.actionFallbackFailed) return root.fallbackBinary
+    return root.bundledBinary
+  }
 
   // Actions requested while another one is still running; drained in order
   // on completion instead of being dropped.
@@ -39,15 +59,15 @@ BarWidget {
   readonly property bool opened: panelItem ? panelItem.opened === true : false
 
   // Today (bar label) — always fed by `watch`.
-  property string statusState: "ok"
+  property string statusState: root.archSupported ? "ok" : "error"
   property string date: ""
   property string path: ""
   property bool exists: false
   property int openCount: 0
   property int doneCount: 0
   property var todos: []
-  property string error: ""
-  property string errorCode: ""
+  property string error: root.archSupported ? "" : "Unsupported architecture: " + hostArch
+  property string errorCode: root.archSupported ? "" : "bad_arch"
   property string obsidianUri: ""
   property int carryOverCount: 0
   property bool isToday: true
@@ -204,6 +224,7 @@ BarWidget {
     var full = root.withVault(args)
     root.pendingActionArgs = full
     actionProc.retried = false
+    actionProc.lastError = ""
     actionProc.command = [root.actionBinary].concat(full)
     actionProc.running = true
   }
@@ -338,7 +359,7 @@ BarWidget {
 
   Component.onCompleted: {
     root.viewDate = Model.todayIso()
-    watchProc.running = true
+    unameProc.running = true
   }
 
   Loader {
@@ -349,6 +370,37 @@ BarWidget {
     onLoaded: {
       root.injectPanel()
       Qt.callLater(root.injectPanel)
+    }
+  }
+
+  Process {
+    id: unameProc
+    command: ["uname", "-m"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var arch = String(line || "").trim()
+        root.hostArch = arch
+        if (!root.archSupported) {
+          root.statusState = "error"
+          root.errorCode = "bad_arch"
+          root.error = "Unsupported architecture: " + arch
+        } else {
+          root.statusState = "ok"
+          root.errorCode = ""
+          root.error = ""
+          watchRestartTimer.interval = 200
+          watchRestartTimer.restart()
+        }
+      }
+    }
+    onRunningChanged: {
+      if (!unameProc.running && !root.archSupported && root.hostArch === "") {
+        // uname finished but produced no output.
+        root.hostArch = "unknown"
+        root.statusState = "error"
+        root.errorCode = "bad_arch"
+        root.error = "Could not detect system architecture"
+      }
     }
   }
 
@@ -369,16 +421,20 @@ BarWidget {
 
   Process {
     id: watchProc
-    command: [root.watchBinary].concat(root.withVault(["watch"].concat(root.headingArgs())))
     property bool startedOnce: false
     property real startedAtMs: 0
     readonly property int minHealthyRunMs: 10000
+    property string lastError: ""
     stdout: SplitParser {
       onRead: function(line) { root.applyTodayLine(line) }
+    }
+    stderr: SplitParser {
+      onRead: function(line) { watchProc.lastError = String(line || "").trim() }
     }
     onStarted: {
       watchProc.startedOnce = true
       watchProc.startedAtMs = Date.now()
+      watchProc.lastError = ""
     }
     onExited: {
       root.statusState = "error"
@@ -390,17 +446,33 @@ BarWidget {
       var shortLived = !failedStart
         && (Date.now() - watchProc.startedAtMs) < watchProc.minHealthyRunMs
       watchProc.startedOnce = false
-      if (failedStart || shortLived) {
-        if (root.statusState !== "error") root.statusState = "error"
-        root.watchFailures += 1
-        if (root.watchFailures >= root.fallbackThreshold) {
-          root.watchFailures = 0
-          root.watchFallback = !root.watchFallback
-        }
-      } else {
-        root.watchFailures = 0
+      if (!failedStart && !shortLived) {
+        // Graceful backend exit (e.g. signal) — restart without latching.
+        watchProc.lastError = ""
+        watchRestartTimer.interval = 5000
+        watchRestartTimer.restart()
+        return
       }
-      watchRestartTimer.interval = 5000
+
+      if (root.statusState !== "error") root.statusState = "error"
+      var isExecError = /exec format error|cannot execute binary file|No such file/i.test(watchProc.lastError)
+      var binaryUsed = root.watchBinary
+      if (binaryUsed === root.bundledBinary) {
+        root.watchBundledFailed = true
+      } else if (binaryUsed === root.fallbackBinary) {
+        root.watchFallbackFailed = true
+      }
+
+      if (root.watchBinaryExhausted) {
+        root.errorCode = isExecError ? "exec_error" : "backend_error"
+        root.error = isExecError
+          ? "Backend cannot run on this architecture (" + root.hostArch + ")"
+          : "Backend failed to start"
+        return
+      }
+
+      // Retry with the other candidate on the next restart cycle.
+      watchRestartTimer.interval = 2000
       watchRestartTimer.restart()
     }
   }
@@ -410,6 +482,8 @@ BarWidget {
     interval: 5000
     repeat: false
     onTriggered: {
+      if (root.watchBinaryExhausted) return
+      if (root.watchBinary === "") return
       watchProc.command = [root.watchBinary].concat(root.withVault(["watch"].concat(root.headingArgs())))
       watchProc.running = true
     }
@@ -419,6 +493,7 @@ BarWidget {
     id: actionProc
     property bool startedOnce: false
     property bool retried: false
+    property string lastError: ""
     stdout: SplitParser {
       onRead: function(line) {
         // Week summaries are handled by weekProc; ignore non-snapshot lines.
@@ -432,27 +507,46 @@ BarWidget {
           root.refreshWeek()
       }
     }
+    stderr: SplitParser {
+      onRead: function(line) { actionProc.lastError = String(line || "").trim() }
+    }
     onStarted: {
       actionProc.startedOnce = true
-      root.actionFailures = 0
+      actionProc.lastError = ""
     }
     onRunningChanged: {
       if (actionProc.running) return
       var failedStart = !actionProc.startedOnce
       actionProc.startedOnce = false
       if (!failedStart || root.pendingActionArgs.length === 0) {
+        actionProc.lastError = ""
         root.pendingActionArgs = []
         root.drainActionQueue()
         return
       }
+
+      var isExecError = /exec format error|cannot execute binary file|No such file/i.test(actionProc.lastError)
+      var binaryUsed = root.actionBinary
+      if (binaryUsed === root.bundledBinary) {
+        root.actionBundledFailed = true
+      } else if (binaryUsed === root.fallbackBinary) {
+        root.actionFallbackFailed = true
+      }
+
+      if (root.actionBinaryExhausted) {
+        root.viewStatusState = "error"
+        root.viewErrorCode = isExecError ? "exec_error" : "backend_error"
+        root.viewError = isExecError
+          ? "Backend cannot run on this architecture (" + root.hostArch + ")"
+          : "Backend failed to start"
+        root.pendingActionArgs = []
+        root.drainActionQueue()
+        return
+      }
+
       if (actionProc.retried) {
         actionProc.retried = false
         root.pendingActionArgs = []
-        root.actionFailures += 1
-        if (root.actionFailures >= root.fallbackThreshold) {
-          root.actionFailures = 0
-          root.actionFallback = !root.actionFallback
-        }
         root.drainActionQueue()
         return
       }

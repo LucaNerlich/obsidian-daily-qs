@@ -7,16 +7,17 @@ Omarchy Quattro bar widget for today's [Obsidian daily note](https://obsidian.md
 
 ## Requirements
 
-- Omarchy Quattro (Quickshell-based shell)
+- Omarchy Quattro (Quickshell-based shell) on Linux
 - An Obsidian vault with the Daily notes core plugin configured
+- A supported architecture: x86_64 or aarch64 (arm64)
 - Vault path via the `vaultPath` bar setting **or** `OBSIDIAN_VAULT_ROOT` for the graphical session — see [Set the vault path](#set-the-vault-path)
 
 Daily note location and date format are read from `.obsidian/daily-notes.json` (`folder`, `format`, optional `template`), relative to the vault root.
 
 ## Architecture
 
-- **Rust backend** (`obsidian-daily-qs`): resolves today's note, parses markdown checkboxes, adds/toggles items, streams JSON snapshots.
-- **QML frontend** (`omarchy/`): `bar-widget` with a details panel. Left-click opens the panel.
+- **Rust backend** (`obsidian-daily-qs`): resolves today's note, parses markdown checkboxes, adds/toggles items, streams JSON snapshots. Released as per-architecture static musl binaries (`linux-x86_64`, `linux-aarch64`).
+- **QML frontend** (`omarchy/`): `bar-widget` with a details panel. Left-click opens the panel. Architecture detection runs once at startup via `uname -m`.
 
 ```
 obsidian-daily-qs watch ──(JSON lines)──▶ BarWidget ─▶ Panel
@@ -36,7 +37,7 @@ omarchy plugin update luca.obsidian-daily
 omarchy plugin remove luca.obsidian-daily
 ```
 
-The plugin bundles a statically linked x86_64 musl build of its backend (`omarchy/bin/obsidian-daily-qs`). If the bundled binary cannot start, the widget falls back to an `obsidian-daily-qs` binary on `PATH` (`cargo install --path .`).
+The plugin bundles statically linked musl builds of its backend for x86_64 and aarch64 (`omarchy/bin/obsidian-daily-qs-<arch>`). The widget picks the binary that matches the host CPU reported by `uname -m`. If the bundled binary for your architecture cannot start, the widget tries an `obsidian-daily-qs` binary on `PATH` once (`cargo install --path .`); if both fail, it latches to an error state instead of restarting forever. On unsupported architectures the bar shows `⚠ arch` with a tooltip explaining the problem.
 
 ### Set the vault path
 
@@ -116,7 +117,7 @@ omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" omarchy/BarWidget.qml omarchy/Panel.qml
 ```
 
-`make bundle` rebuilds the musl backend into `omarchy/bin/` (Linux). `make verify-bundle` is the marketplace gate. Any edit under `src/`, `Cargo.toml`, `Cargo.lock`, or `rust-toolchain.toml` requires a fresh `make bundle` in the same change.
+`make bundle` rebuilds the musl backends for x86_64 and aarch64 into `omarchy/bin/` (Linux). `make verify-bundle` is the marketplace gate. Any edit under `src/`, `Cargo.toml`, `Cargo.lock`, or `rust-toolchain.toml` requires a fresh `make bundle` in the same change.
 
 ### Releasing
 

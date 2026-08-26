@@ -1,8 +1,8 @@
 [toolchain]
-# Pinned so the bundled backend is byte-for-byte reproducible. Bump this in
-# the same commit that regenerates omarchy/bin/obsidian-daily-qs.
+# Pinned so the bundled backends are byte-for-byte reproducible. Bump this in
+# the same commit that regenerates omarchy/bin/obsidian-daily-qs-*.
 channel = "1.97.1"
-targets = ["x86_64-unknown-linux-musl"]
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
 # rust-toolchain.toml overrides rustup's default, so rustfmt/clippy must live
 # on this pin — installing them only on `stable` makes `cargo fmt` fail.
 components = ["rustfmt", "clippy"]

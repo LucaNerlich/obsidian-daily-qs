@@ -129,6 +129,29 @@ test("labelText done/total", () => {
   );
 });
 
+test("labelText surfaces architecture errors", () => {
+  assert.equal(
+    Model.labelText({ state: "error", errorCode: "bad_arch", error: "riscv64" }),
+    "\u26A0 arch",
+  );
+  assert.equal(
+    Model.labelText({ state: "error", errorCode: "exec_error", error: "exec format error" }),
+    "\u26A0 arch",
+  );
+  assert.equal(Model.labelText({ state: "error", errorCode: "io" }), "!");
+});
+
+test("tooltipText surfaces architecture errors", () => {
+  assert.match(
+    Model.tooltipText({ state: "error", errorCode: "bad_arch", error: "riscv64" }),
+    /unsupported architecture/,
+  );
+  assert.match(
+    Model.tooltipText({ state: "error", errorCode: "exec_error", error: "exec format error" }),
+    /backend cannot execute/,
+  );
+});
+
 test("visibleTodos openOnly", () => {
   const status = {
     todos: [

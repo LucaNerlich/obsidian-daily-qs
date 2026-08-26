@@ -14,10 +14,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-target="x86_64-unknown-linux-musl"
-bin="$repo_root/omarchy/bin/obsidian-daily-qs"
-expected_file="$repo_root/omarchy/bin/obsidian-daily-qs.sha256"
-srcid_file="$repo_root/omarchy/bin/obsidian-daily-qs.srcid"
+targets=("x86_64-unknown-linux-musl" "aarch64-unknown-linux-musl")
+bin_dir="$repo_root/omarchy/bin"
 
 fail() {
   echo "verify-bundle: $*" >&2
@@ -26,52 +24,60 @@ fail() {
 
 cd "$repo_root"
 
-# --- inspectability and recorded identity (fast; no rebuild) ---
+verify_one() {
+  local target="$1"
+  local arch="${target%%-*}"
+  local bin="$bin_dir/obsidian-daily-qs-$arch"
+  local expected_file="$bin_dir/obsidian-daily-qs-$arch.sha256"
+  local srcid_file="$bin_dir/obsidian-daily-qs.srcid"
 
-[[ -f "$bin" ]] || fail "missing committed ELF $bin"
-[[ -f "$expected_file" ]] || fail "missing $expected_file"
+  # --- inspectability and recorded identity (fast; no rebuild) ---
 
-expected="$(awk '{print $1}' "$expected_file")"
-[[ ${#expected} -eq 64 ]] || fail "recorded hash in $expected_file is not a SHA-256"
+  [[ -f "$bin" ]] || fail "missing committed ELF $bin"
+  [[ -f "$expected_file" ]] || fail "missing $expected_file"
 
-committed="$(sha256sum "$bin" | awk '{print $1}')"
-if [[ "$committed" != "$expected" ]]; then
-  fail "committed ELF does not match the recorded hash
+  local expected committed file_out recorded_srcid actual_srcid
+
+  expected="$(awk '{print $1}' "$expected_file")"
+  [[ ${#expected} -eq 64 ]] || fail "recorded hash in $expected_file is not a SHA-256"
+
+  committed="$(sha256sum "$bin" | awk '{print $1}')"
+  if [[ "$committed" != "$expected" ]]; then
+    fail "committed ELF does not match the recorded hash
   recorded:  $expected
   committed: $committed
 Run 'scripts/build-bundle.sh' and commit the binary, .sha256, and .srcid."
-fi
+  fi
 
-# Catch a stale bundle before the musl rebuild. rustc embeds a crate
-# disambiguator (a hash of this crate's source) in symbol names, so even a
-# comment-only edit of src/*.rs changes the ELF. Marketplace review then
-# rebuilds at that SHA and rejects the leftover binary.
-[[ -f "$srcid_file" ]] || fail "missing $srcid_file
+  [[ -f "$srcid_file" ]] || fail "missing $srcid_file
 Run 'scripts/build-bundle.sh' and commit the binary, .sha256, and .srcid."
-recorded_srcid="$(awk '{print $1}' "$srcid_file")"
-[[ ${#recorded_srcid} -eq 64 ]] || fail "recorded source id in $srcid_file is not a SHA-256"
-actual_srcid="$("$repo_root/scripts/bundle-source-id.sh")"
-if [[ "$recorded_srcid" != "$actual_srcid" ]]; then
-  fail "committed ELF is stale relative to the tracked Rust source
+  recorded_srcid="$(awk '{print $1}' "$srcid_file")"
+  [[ ${#recorded_srcid} -eq 64 ]] || fail "recorded source id in $srcid_file is not a SHA-256"
+  actual_srcid="$("$repo_root/scripts/bundle-source-id.sh")"
+  if [[ "$recorded_srcid" != "$actual_srcid" ]]; then
+    fail "committed ELF is stale relative to the tracked Rust source
   recorded source id: $recorded_srcid
   current source id:  $actual_srcid
 
 Comments, docs, and whitespace in src/*.rs all count: rustc hashes them
 into symbol names (the crate disambiguator). Run 'scripts/build-bundle.sh'
-and commit omarchy/bin/obsidian-daily-qs, .sha256, and .srcid in the same
+and commit omarchy/bin/obsidian-daily-qs-*{,.sha256} and .srcid in the same
 change as the Rust edit."
-fi
+  fi
 
-file_out="$(file -b "$bin")"
-[[ "$file_out" == ELF* ]] || fail "committed file is not an ELF: $file_out"
-[[ "$file_out" == *"not stripped"* ]] || fail "committed ELF is stripped (marketplace review inspects symbols with nm): $file_out"
+  file_out="$(file -b "$bin")"
+  [[ "$file_out" == ELF* ]] || fail "committed file is not an ELF: $file_out"
+  [[ "$file_out" == *"not stripped"* ]] || fail "committed ELF is stripped (marketplace review inspects symbols with nm): $file_out"
 
-command -v nm >/dev/null || fail "nm is required to attest inspectability"
-nm "$bin" >/dev/null 2>&1 || fail "nm cannot read the committed ELF"
-# Avoid grep -q: with pipefail, an early match SIGPIPEs nm and looks like failure.
-if ! nm "$bin" | grep 'obsidian_daily_qs' >/dev/null; then
-  fail "committed ELF has no crate symbols; it is not inspectable against the tracked Rust source"
-fi
+  command -v nm >/dev/null || fail "nm is required to attest inspectability"
+  nm "$bin" >/dev/null 2>&1 || fail "nm cannot read the committed ELF"
+  # Avoid grep -q: with pipefail, an early match SIGPIPEs nm and looks like failure.
+  if ! nm "$bin" | grep 'obsidian_daily_qs' >/dev/null; then
+    fail "committed ELF has no crate symbols; it is not inspectable against the tracked Rust source"
+  fi
+
+  echo "verified ($arch): hash $committed, source id $actual_srcid, non-stripped"
+}
 
 if grep -Eq '^strip[[:space:]]*=[[:space:]]*(true|"symbols"|"all")' "$repo_root/Cargo.toml"; then
   fail "Cargo.toml must not fully strip the release binary (use strip = \"debuginfo\")"
@@ -107,8 +113,12 @@ if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
   [[ "$crate_version" == "$tag" ]] || fail "git tag ${GITHUB_REF_NAME} does not match crate version $crate_version"
 fi
 
+for target in "${targets[@]}"; do
+  verify_one "$target"
+done
+
 if [[ "${VERIFY_BUNDLE_SKIP_REBUILD:-}" == 1 ]]; then
-  echo "verified: omarchy/bin/obsidian-daily-qs is non-stripped, version $crate_version, hash $committed, source id $actual_srcid (rebuild skipped)"
+  echo "verified: committed ELFs are non-stripped, version $crate_version (rebuild skipped)"
   exit 0
 fi
 
@@ -122,17 +132,34 @@ export RUSTFLAGS="${RUSTFLAGS:-} \
   --remap-path-prefix=${repo_root}=."
 export CARGO_TARGET_DIR="$tmp/target"
 
-cargo build --release --locked --target "$target"
+# Use rust-lld so the rebuild matches the committed binaries on hosts without
+# a musl gcc cross toolchain.
+for target in "${targets[@]}"; do
+  normalized="${target^^}"
+  normalized="${normalized//-/_}"
+  linker_var="CARGO_TARGET_${normalized}_LINKER"
+  if [[ -z "${!linker_var:-}" ]]; then
+    declare -x "$linker_var"="rust-lld"
+  fi
+done
 
-actual="$(sha256sum "$tmp/target/$target/release/obsidian-daily-qs" | awk '{print $1}')"
-if [[ "$expected" != "$actual" ]]; then
-  fail "bundled binary does not match the reproducible build of the tracked source
+for target in "${targets[@]}"; do
+  arch="${target%%-*}"
+  expected="$(awk '{print $1}' "$bin_dir/obsidian-daily-qs-$arch.sha256")"
+
+  cargo build --release --locked --target "$target"
+
+  actual="$(sha256sum "$tmp/target/$target/release/obsidian-daily-qs" | awk '{print $1}')"
+  if [[ "$expected" != "$actual" ]]; then
+    fail "bundled binary for $arch does not match the reproducible build of the tracked source
   expected: $expected
   actual:   $actual
 
 The source fingerprint matches, so this is a toolchain/flags drift rather
 than a forgotten rebuild. Run 'scripts/build-bundle.sh' with the pinned
 1.97.1 musl toolchain and commit the result."
-fi
+  fi
+  echo "rebuild verified ($arch): $actual"
+done
 
-echo "verified: omarchy/bin/obsidian-daily-qs is non-stripped, version $crate_version, and matches the reproducible build ($actual)"
+echo "verified: all committed ELFs are non-stripped, version $crate_version, and match reproducible builds"
