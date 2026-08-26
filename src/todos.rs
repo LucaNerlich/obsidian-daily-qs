@@ -708,10 +708,16 @@ fn insert_todo_lines(content: &str, items: &[String]) -> String {
             let level = line.chars().take_while(|ch| *ch == '#').count();
             let section_start = idx + 1;
             let mut section_end = section_start;
+            let mut in_fence = false;
             while section_end < lines.len() {
-                if let Some(next) = any_heading.captures(lines[section_end]) {
-                    if next[1].len() <= level {
-                        break;
+                let trimmed = lines[section_end].trim_start();
+                if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                    in_fence = !in_fence;
+                } else if !in_fence {
+                    if let Some(next) = any_heading.captures(lines[section_end]) {
+                        if next[1].len() <= level {
+                            break;
+                        }
                     }
                 }
                 section_end += 1;
@@ -1043,6 +1049,19 @@ mod tests {
         assert_eq!(
             body,
             "# Day\n\n## Todos\n\n- [ ] first\n\n### Later\n\n- [ ] second\n- [ ] last\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn ignores_heading_like_lines_inside_fenced_code_block() {
+        let (vault, date, note) =
+            vault_with("# Day\n\n## Todos\n\n- [ ] first\n\n```\n## fake\n```\n\n## Notes\n");
+        add_todo(&vault, date, "last").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] first\n\n```\n## fake\n```\n- [ ] last\n\n## Notes\n"
         );
         let _ = fs::remove_dir_all(vault.root());
     }
