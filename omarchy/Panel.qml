@@ -61,7 +61,6 @@ Panel {
   readonly property string metaText: Model.metaLine(status)
   readonly property var shownTodos: Model.visibleTodos(status, root.openOnly, root.searchText)
   readonly property string emptyText: Model.emptyMessage(status, root.openOnly, root.searchText)
-  readonly property string sectionTitle: root.openOnly ? "OPEN TODOS" : "TODOS"
   readonly property color iconColor: root.statusState === "error" ? root.urgent : root.foreground
   readonly property var selectedTodo: (selectedIndex >= 0 && selectedIndex < shownTodos.length)
     ? shownTodos[selectedIndex] : null
@@ -331,8 +330,7 @@ Panel {
           PanelHero {
             width: parent.width
             title: "Obsidian Daily"
-            meta: root.metaText
-            detail: root.date !== "" ? root.date : "Daily note"
+            meta: root.date !== "" ? root.date : "Daily note"
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -594,9 +592,11 @@ Panel {
 
               PanelSectionHeader {
                 width: parent.width
-                text: root.sectionTitle
+                text: root.metaText
+                color: root.foreground
                 foreground: root.foreground
                 fontFamily: root.fontFamily
+                fontSize: Style.font.title
               }
 
               Text {
