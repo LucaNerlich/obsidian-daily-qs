@@ -545,35 +545,11 @@ Panel {
 
               RowLayout {
                 width: parent.width
-                spacing: Style.space(10)
-
-                Text {
-                  text: "Open only"
-                  textFormat: Text.PlainText
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: true
-                  Layout.alignment: Qt.AlignVCenter
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.openOnly = !root.openOnly
-                  }
-                }
-
-                ToggleSwitch {
-                  checked: root.openOnly
-                  foreground: root.foreground
-                  trackHeight: Style.space(18)
-                  Layout.alignment: Qt.AlignVCenter
-                  onToggled: root.openOnly = !root.openOnly
-                }
+                visible: root.isToday && root.carryOverCount > 0
 
                 Item { Layout.fillWidth: true }
 
                 Button {
-                  visible: root.isToday && root.carryOverCount > 0
                   text: "Carry over " + root.carryOverCount
                   bordered: true
                   foreground: root.foreground
@@ -590,13 +566,68 @@ Panel {
               width: parent.width
               spacing: Style.space(8)
 
-              PanelSectionHeader {
+              RowLayout {
                 width: parent.width
-                text: root.metaText
-                color: root.foreground
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.title
+                spacing: Style.space(8)
+
+                PanelSectionHeader {
+                  text: root.metaText
+                  color: root.foreground
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.title
+                  Layout.fillWidth: true
+                  Layout.alignment: Qt.AlignVCenter
+                }
+
+                CheckBox {
+                  id: hideDoneCheck
+                  text: "Hide done"
+                  checked: root.openOnly
+                  spacing: Style.space(5)
+                  leftPadding: 0
+                  rightPadding: 0
+                  topPadding: 0
+                  bottomPadding: 0
+                  Layout.alignment: Qt.AlignVCenter
+                  onToggled: root.openOnly = checked
+
+                  indicator: BorderSurface {
+                    implicitWidth: Style.space(14)
+                    implicitHeight: Style.space(14)
+                    x: 0
+                    y: (hideDoneCheck.height - height) / 2
+                    radius: Math.max(2, Style.cornerRadius * 0.4)
+                    color: hideDoneCheck.checked
+                      ? Style.selectedFillFor(root.foreground, root.accent)
+                      : "transparent"
+                    borderSpec: Border.controlSpec(
+                      hideDoneCheck.checked ? "selected" : "normal",
+                      root.foreground,
+                      root.accent)
+
+                    Text {
+                      anchors.centerIn: parent
+                      visible: hideDoneCheck.checked
+                      text: "\u2713"
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+                  }
+
+                  contentItem: Text {
+                    leftPadding: hideDoneCheck.indicator.width + hideDoneCheck.spacing
+                    text: hideDoneCheck.text
+                    textFormat: Text.PlainText
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    verticalAlignment: Text.AlignVCenter
+                  }
+                }
               }
 
               Text {
