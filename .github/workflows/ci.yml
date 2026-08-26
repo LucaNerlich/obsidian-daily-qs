@@ -84,25 +84,13 @@ jobs:
       - name: Plugin model tests
         run: node omarchy/model.test.mjs
 
-  msrv:
-    name: test (rust 1.85)
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  # No separate msrv job: rust-version in Cargo.toml is pinned to the same
+  # 1.97.1 toolchain used everywhere else (rust-toolchain.toml), so a
+  # dedicated "does it build on the declared minimum" job would just rebuild
+  # under the exact same toolchain the `linux` job above already uses.
 
-      - uses: dtolnay/rust-toolchain@bc540ba06a4ccee415bb241490e0b25ee8e7d315 # 1.85.0
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: msrv-1.85.0
-
-      - name: Check declared minimum Rust version
-        run: cargo check --all-targets --locked
-
-  # Independent of linux/msrv/changes: marketplace review needs this job to
-  # run on every commit, even one that only touches QML, and even if a
+  # Independent of linux/changes: marketplace review needs this job to run
+  # on every commit, even one that only touches QML, and even if a
   # prerequisite such as rustfmt is missing. A skipped verify cannot attest
   # that the bundled ELF matches the reviewed source. Do not add `needs:`
   # here. The tag Release workflow re-runs the same script.
