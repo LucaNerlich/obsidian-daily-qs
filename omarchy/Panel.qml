@@ -29,6 +29,7 @@ Panel {
   property int selectedIndex: -1
   property int editingLine: -1
   property string editingOriginal: ""
+  property int pendingAppendCount: 0
 
   readonly property string statusState: hasWatcher ? String(watcher.viewStatusState || "ok") : "ok"
   readonly property string date: hasWatcher ? String(watcher.viewDate || "") : ""
@@ -74,9 +75,14 @@ Panel {
 
   function addTodo(underSelected) {
     if (!hasWatcher || typeof watcher.addTodo !== "function") return
+    if (String(inputField.text || "").trim() === "") return
     var underLine = undefined
     if (underSelected === true && root.selectedTodo)
       underLine = root.selectedTodo.line
+    if (underSelected !== true) {
+      root.searchText = ""
+      root.pendingAppendCount += 1
+    }
     watcher.addTodo(inputField.text, underLine)
     inputField.text = ""
   }
@@ -237,6 +243,16 @@ Panel {
     }
   }
 
+  onTodosChanged: {
+    if (root.pendingAppendCount > 0 && root.shownTodos.length > 0) {
+      root.pendingAppendCount -= 1
+      Qt.callLater(function() {
+        root.selectedIndex = root.shownTodos.length - 1
+        root.scrollSelectedIntoView()
+      })
+    }
+  }
+
   onDateChanged: {
     root.selectedIndex = -1
     root.cancelEdit()
@@ -263,7 +279,10 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(580))
+    contentHeight: panel.fittedContentHeight(
+      column.implicitHeight
+        + (root.vaultSetupError ? 0 : Style.space(12) + addTodoFooter.implicitHeight),
+      Style.space(580))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -294,7 +313,11 @@ Panel {
 
       Flickable {
         id: panelFlick
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: addTodoFooter.top
+        anchors.bottomMargin: addTodoFooter.visible ? Style.space(12) : 0
         contentWidth: width
         contentHeight: column.implicitHeight
         clip: true
@@ -488,43 +511,6 @@ Panel {
             Column {
               width: parent.width
               spacing: Style.space(8)
-
-              RowLayout {
-                width: parent.width
-                spacing: Style.space(6)
-
-                TextField {
-                  id: inputField
-                  Layout.fillWidth: true
-                  placeholderText: "Add a todo…"
-                  foreground: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  onAccepted: root.addTodo(false)
-                  Keys.onEscapePressed: root.close()
-                  Keys.onPressed: function(event) {
-                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                        && (event.modifiers & Qt.ShiftModifier)) {
-                      root.addTodo(true)
-                      event.accepted = true
-                      return
-                    }
-                    if (event.text === "/" && inputField.text === "") {
-                      searchField.forceActiveFocus()
-                      event.accepted = true
-                    }
-                  }
-                }
-
-                PanelActionButton {
-                  iconText: "+"
-                  tooltipText: "Add todo"
-                  bordered: true
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  onClicked: root.addTodo(false)
-                }
-              }
 
               RowLayout {
                 width: parent.width
@@ -746,7 +732,60 @@ Panel {
                   }
                 }
               }
+
             }
+          }
+        }
+      }
+
+      Column {
+        id: addTodoFooter
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        visible: !root.vaultSetupError
+        height: visible ? implicitHeight : 0
+        spacing: Style.space(8)
+
+        PanelSeparator {
+          width: parent.width
+          foreground: root.foreground
+        }
+
+        RowLayout {
+          width: parent.width
+          spacing: Style.space(6)
+
+          TextField {
+            id: inputField
+            Layout.fillWidth: true
+            placeholderText: "Add a todo…"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            onAccepted: root.addTodo(false)
+            Keys.onEscapePressed: root.close()
+            Keys.onPressed: function(event) {
+              if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                  && (event.modifiers & Qt.ShiftModifier)) {
+                root.addTodo(true)
+                event.accepted = true
+                return
+              }
+              if (event.text === "/" && inputField.text === "") {
+                searchField.forceActiveFocus()
+                event.accepted = true
+              }
+            }
+          }
+
+          PanelActionButton {
+            iconText: "+"
+            tooltipText: "Add todo"
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.addTodo(false)
           }
         }
       }

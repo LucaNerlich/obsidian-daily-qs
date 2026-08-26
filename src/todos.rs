@@ -699,14 +699,50 @@ pub fn write_atomic_public(
 
 fn insert_todo_lines(content: &str, items: &[String]) -> String {
     let heading = tasks_heading_re();
+    let any_heading = Regex::new(r"^(#{1,6})\s+.+?\s*$").expect("heading regex");
     let lines: Vec<&str> = content.lines().collect();
     let mut insert_at: Option<usize> = None;
+    let mut needs_boundary_blank = false;
     for (idx, line) in lines.iter().enumerate() {
         if heading.is_match(line) {
-            // Insert after the heading, skipping a single following blank line.
-            let mut at = idx + 1;
-            if at < lines.len() && lines[at].trim().is_empty() {
+            let level = line.chars().take_while(|ch| *ch == '#').count();
+            let section_start = idx + 1;
+            let mut section_end = section_start;
+            let mut in_fence = false;
+            while section_end < lines.len() {
+                let trimmed = lines[section_end].trim_start();
+                if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                    in_fence = !in_fence;
+                } else if !in_fence {
+                    if let Some(next) = any_heading.captures(lines[section_end]) {
+                        if next[1].len() <= level {
+                            break;
+                        }
+                    }
+                }
+                section_end += 1;
+            }
+
+            // Append after the section's existing content while keeping blank
+            // lines that separate it from the next peer heading.
+            let mut at = section_end;
+            while at > section_start && lines[at - 1].trim().is_empty() {
+                at -= 1;
+            }
+            // An otherwise-empty section conventionally keeps one blank line
+            // between its heading and first todo.
+            if at == section_start
+                && section_start < section_end
+                && lines[section_start].trim().is_empty()
+            {
                 at += 1;
+                // If the section contained only a single blank line, there is
+                // no remaining blank-line boundary after the insertion point;
+                // add one so the new todos stay separated from the next peer
+                // heading.
+                if at == section_end {
+                    needs_boundary_blank = true;
+                }
             }
             insert_at = Some(at);
             break;
@@ -718,6 +754,9 @@ fn insert_todo_lines(content: &str, items: &[String]) -> String {
         Some(at) => {
             for (offset, item) in items.iter().enumerate() {
                 out.insert(at + offset, item.clone());
+            }
+            if needs_boundary_blank {
+                out.insert(at + items.len(), String::new());
             }
         }
         None => {
@@ -981,10 +1020,10 @@ mod tests {
         let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n- [ ] existing\n\n## Notes\n");
         add_todo(&vault, date, "new one").unwrap();
         let body = fs::read_to_string(&note).unwrap();
-        let lines: Vec<&str> = body.lines().collect();
-        let todos_idx = lines.iter().position(|l| *l == "## Todos").unwrap();
-        assert_eq!(lines[todos_idx + 2], "- [ ] new one");
-        assert!(lines.contains(&"- [ ] existing"));
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
         let _ = fs::remove_dir_all(vault.root());
     }
 
@@ -993,10 +1032,46 @@ mod tests {
         let (vault, date, note) = vault_with("# Day\n\n## Tasks\n\n- [ ] existing\n\n## Notes\n");
         add_todo(&vault, date, "new one").unwrap();
         let body = fs::read_to_string(&note).unwrap();
-        let lines: Vec<&str> = body.lines().collect();
-        let tasks_idx = lines.iter().position(|l| *l == "## Tasks").unwrap();
-        assert_eq!(lines[tasks_idx + 2], "- [ ] new one");
-        assert!(lines.contains(&"- [ ] existing"));
+        assert_eq!(
+            body,
+            "# Day\n\n## Tasks\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn appends_after_nested_content_in_todo_section() {
+        let (vault, date, note) = vault_with(
+            "# Day\n\n## Todos\n\n- [ ] first\n\n### Later\n\n- [ ] second\n\n## Notes\n",
+        );
+        add_todo(&vault, date, "last").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] first\n\n### Later\n\n- [ ] second\n- [ ] last\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn ignores_heading_like_lines_inside_fenced_code_block() {
+        let (vault, date, note) =
+            vault_with("# Day\n\n## Todos\n\n- [ ] first\n\n```\n## fake\n```\n\n## Notes\n");
+        add_todo(&vault, date, "last").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] first\n\n```\n## fake\n```\n- [ ] last\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn preserves_blank_line_boundary_in_empty_section() {
+        let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n## Notes\n");
+        add_todo(&vault, date, "new one").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(body, "# Day\n\n## Todos\n\n- [ ] new one\n\n## Notes\n");
         let _ = fs::remove_dir_all(vault.root());
     }
 
