@@ -23,6 +23,7 @@ Panel {
   readonly property color dim: Qt.darker(foreground, 1.45)
   readonly property color accent: Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property real todoHoverOverflow: Style.space(6)
 
   property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
   property string searchText: ""
@@ -37,6 +38,7 @@ Panel {
   readonly property int openCount: hasWatcher ? Number(watcher.viewOpenCount || 0) : 0
   readonly property int doneCount: hasWatcher ? Number(watcher.viewDoneCount || 0) : 0
   readonly property var todos: hasWatcher ? (watcher.viewTodos || []) : []
+  readonly property bool searchAvailable: root.todos.length >= 3
   readonly property string error: hasWatcher ? String(watcher.viewError || "") : ""
   readonly property string errorCode: hasWatcher ? String(watcher.viewErrorCode || "") : ""
   readonly property int carryOverCount: hasWatcher ? Number(watcher.viewCarryOverCount || 0) : 0
@@ -61,10 +63,16 @@ Panel {
   readonly property string metaText: Model.metaLine(status)
   readonly property var shownTodos: Model.visibleTodos(status, root.openOnly, root.searchText)
   readonly property string emptyText: Model.emptyMessage(status, root.openOnly, root.searchText)
-  readonly property string sectionTitle: root.openOnly ? "OPEN TODOS" : "TODOS"
   readonly property color iconColor: root.statusState === "error" ? root.urgent : root.foreground
   readonly property var selectedTodo: (selectedIndex >= 0 && selectedIndex < shownTodos.length)
     ? shownTodos[selectedIndex] : null
+
+  onSearchAvailableChanged: {
+    if (!root.searchAvailable) {
+      root.searchText = ""
+      if (searchField.activeFocus) inputField.forceActiveFocus()
+    }
+  }
 
   function focusCapture() {
     if (root.vaultSetupError)
@@ -280,8 +288,11 @@ Panel {
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(
-      column.implicitHeight
-        + (root.vaultSetupError ? 0 : Style.space(12) + addTodoFooter.implicitHeight),
+      headerColumn.implicitHeight
+        + (root.vaultSetupError
+          ? 0
+          : Style.space(8) + todoViewportContent.implicitHeight
+            + Style.space(12) + addTodoFooter.implicitHeight),
       Style.space(580))
 
     PanelKeyCatcher {
@@ -294,7 +305,7 @@ Panel {
       onActivateRequested: root.activateSelected()
       onDeleteRequested: root.deleteSelected()
       onTextKey: function(t) {
-        if (t === "/") {
+        if (t === "/" && root.searchAvailable) {
           searchField.forceActiveFocus()
         } else if (t === "[") {
           root.indentSelected(-1)
@@ -311,31 +322,17 @@ Panel {
         root.moveSelection(dy)
       }
 
-      Flickable {
-        id: panelFlick
+      Column {
+        id: headerColumn
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: addTodoFooter.top
-        anchors.bottomMargin: addTodoFooter.visible ? Style.space(12) : 0
-        contentWidth: width
-        contentHeight: column.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        flickableDirection: Flickable.VerticalFlick
-        interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-        Column {
-          id: column
-          width: panelFlick.width
-          spacing: Style.space(12)
+        spacing: Style.space(12)
 
           PanelHero {
             width: parent.width
-            title: "Obsidian Daily"
-            meta: root.metaText
-            detail: root.date !== "" ? root.date : "Daily note"
+            title: "Obsidian Daily<br><font color=\"" + root.dim + "\">"
+              + (root.date !== "" ? root.date : "Daily note") + "</font>"
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -378,6 +375,7 @@ Panel {
                 PanelActionButton {
                   iconText: "\u2197"
                   tooltipText: "Open in Obsidian"
+                  y: 2
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.openInObsidian()
@@ -515,6 +513,7 @@ Panel {
               RowLayout {
                 width: parent.width
                 spacing: Style.space(6)
+                visible: root.searchAvailable
 
                 TextField {
                   id: searchField
@@ -550,35 +549,11 @@ Panel {
 
               RowLayout {
                 width: parent.width
-                spacing: Style.space(10)
-
-                Text {
-                  text: "Open only"
-                  textFormat: Text.PlainText
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: true
-                  Layout.alignment: Qt.AlignVCenter
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.openOnly = !root.openOnly
-                  }
-                }
-
-                ToggleSwitch {
-                  checked: root.openOnly
-                  foreground: root.foreground
-                  trackHeight: Style.space(18)
-                  Layout.alignment: Qt.AlignVCenter
-                  onToggled: root.openOnly = !root.openOnly
-                }
+                visible: root.isToday && root.carryOverCount > 0
 
                 Item { Layout.fillWidth: true }
 
                 Button {
-                  visible: root.isToday && root.carryOverCount > 0
                   text: "Carry over " + root.carryOverCount
                   bordered: true
                   foreground: root.foreground
@@ -591,41 +566,118 @@ Panel {
               }
             }
 
-            PanelSeparator {
-              width: parent.width
-              foreground: root.foreground
-            }
-
-            Column {
+            RowLayout {
               width: parent.width
               spacing: Style.space(8)
+              visible: root.todos.length > 0
 
               PanelSectionHeader {
-                width: parent.width
-                text: root.sectionTitle
+                text: root.metaText
+                color: root.foreground
                 foreground: root.foreground
                 fontFamily: root.fontFamily
+                fontSize: Style.font.title
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
               }
 
-              Text {
-                width: parent.width
-                visible: root.shownTodos.length === 0
-                topPadding: Style.space(8)
-                bottomPadding: Style.space(8)
-                text: root.emptyText
-                textFormat: Text.PlainText
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-              }
+              CheckBox {
+                id: hideDoneCheck
+                text: "Hide done"
+                checked: root.openOnly
+                spacing: Style.space(5)
+                leftPadding: 0
+                rightPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                Layout.alignment: Qt.AlignVCenter
+                Layout.topMargin: 4
+                onToggled: root.openOnly = checked
 
-              Column {
-                id: todoColumn
-                width: parent.width
-                spacing: Style.space(4)
-                visible: root.shownTodos.length > 0
+                indicator: BorderSurface {
+                  implicitWidth: Style.space(14)
+                  implicitHeight: Style.space(14)
+                  x: 0
+                  y: (hideDoneCheck.height - height) / 2
+                  radius: Math.max(2, Style.cornerRadius * 0.4)
+                  color: hideDoneCheck.checked
+                    ? Style.selectedFillFor(root.foreground, root.accent)
+                    : "transparent"
+                  borderSpec: Border.controlSpec(
+                    hideDoneCheck.checked ? "selected" : "normal",
+                    root.foreground,
+                    root.accent)
+
+                  Text {
+                    anchors.centerIn: parent
+                    visible: hideDoneCheck.checked
+                    text: "\u2713"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                }
+
+                contentItem: Text {
+                  leftPadding: hideDoneCheck.indicator.width + hideDoneCheck.spacing
+                  text: hideDoneCheck.text
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  verticalAlignment: Text.AlignVCenter
+                }
+              }
+            }
+          }
+        }
+
+      Flickable {
+        id: panelFlick
+        anchors.top: headerColumn.bottom
+        anchors.topMargin: visible ? Style.space(8) : 0
+        anchors.left: parent.left
+        anchors.leftMargin: -root.todoHoverOverflow
+        anchors.right: parent.right
+        anchors.rightMargin: -root.todoHoverOverflow
+        anchors.bottom: addTodoFooter.top
+        anchors.bottomMargin: visible ? Style.space(12) : 0
+        visible: !root.vaultSetupError
+        contentWidth: width
+        contentHeight: todoViewportContent.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        Column {
+          id: todoViewportContent
+          width: panelFlick.width
+
+          Text {
+            x: root.todoHoverOverflow
+            width: parent.width - root.todoHoverOverflow * 2
+            visible: root.shownTodos.length === 0
+            topPadding: Style.space(8)
+            bottomPadding: Style.space(8)
+            text: root.emptyText
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+          }
+
+          Column {
+            id: todoColumn
+            x: root.todoHoverOverflow
+            width: parent.width - root.todoHoverOverflow * 2
+            spacing: Style.space(4)
+            visible: root.shownTodos.length > 0
 
                 Repeater {
                   model: root.shownTodos
@@ -636,7 +688,8 @@ Panel {
                     required property int index
                     property int todoIndex: index
                     property bool hovered: todoMouse.containsMouse
-                    width: todoColumn.width
+                    x: -root.todoHoverOverflow
+                    width: todoColumn.width + root.todoHoverOverflow * 2
                     implicitHeight: todoInner.implicitHeight + Style.space(8)
                     foreground: root.foreground
                     accent: root.accent
@@ -665,8 +718,9 @@ Panel {
                       anchors.left: parent.left
                       anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
-                      anchors.leftMargin: Style.space(8) + (modelData.depth || 0) * Style.space(14)
-                      anchors.rightMargin: Style.space(8)
+                      anchors.leftMargin: root.todoHoverOverflow
+                        + (modelData.depth || 0) * Style.space(14)
+                      anchors.rightMargin: root.todoHoverOverflow + Style.space(8)
                       spacing: Style.space(10)
 
                       BorderSurface {
@@ -731,9 +785,6 @@ Panel {
                     }
                   }
                 }
-              }
-
-            }
           }
         }
       }
@@ -746,11 +797,6 @@ Panel {
         visible: !root.vaultSetupError
         height: visible ? implicitHeight : 0
         spacing: Style.space(8)
-
-        PanelSeparator {
-          width: parent.width
-          foreground: root.foreground
-        }
 
         RowLayout {
           width: parent.width
@@ -772,7 +818,7 @@ Panel {
                 event.accepted = true
                 return
               }
-              if (event.text === "/" && inputField.text === "") {
+              if (event.text === "/" && inputField.text === "" && root.searchAvailable) {
                 searchField.forceActiveFocus()
                 event.accepted = true
               }
