@@ -276,8 +276,11 @@ Panel {
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(
-      column.implicitHeight
-        + (root.vaultSetupError ? 0 : Style.space(12) + addTodoFooter.implicitHeight),
+      headerColumn.implicitHeight
+        + (root.vaultSetupError
+          ? 0
+          : Style.space(8) + todoViewportContent.implicitHeight
+            + Style.space(12) + addTodoFooter.implicitHeight),
       Style.space(580))
 
     PanelKeyCatcher {
@@ -307,25 +310,12 @@ Panel {
         root.moveSelection(dy)
       }
 
-      Flickable {
-        id: panelFlick
+      Column {
+        id: headerColumn
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: addTodoFooter.top
-        anchors.bottomMargin: addTodoFooter.visible ? Style.space(12) : 0
-        contentWidth: width
-        contentHeight: column.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        flickableDirection: Flickable.VerticalFlick
-        interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-        Column {
-          id: column
-          width: panelFlick.width
-          spacing: Style.space(12)
+        spacing: Style.space(12)
 
           PanelHero {
             width: parent.width
@@ -563,94 +553,113 @@ Panel {
               }
             }
 
-            Column {
+            RowLayout {
               width: parent.width
               spacing: Style.space(8)
 
-              RowLayout {
-                width: parent.width
-                spacing: Style.space(8)
+              PanelSectionHeader {
+                text: root.metaText
+                color: root.foreground
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.title
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+              }
 
-                PanelSectionHeader {
-                  text: root.metaText
-                  color: root.foreground
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  fontSize: Style.font.title
-                  Layout.fillWidth: true
-                  Layout.alignment: Qt.AlignVCenter
-                }
+              CheckBox {
+                id: hideDoneCheck
+                text: "Hide done"
+                checked: root.openOnly
+                spacing: Style.space(5)
+                leftPadding: 0
+                rightPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                Layout.alignment: Qt.AlignVCenter
+                Layout.topMargin: 4
+                onToggled: root.openOnly = checked
 
-                CheckBox {
-                  id: hideDoneCheck
-                  text: "Hide done"
-                  checked: root.openOnly
-                  spacing: Style.space(5)
-                  leftPadding: 0
-                  rightPadding: 0
-                  topPadding: 0
-                  bottomPadding: 0
-                  Layout.alignment: Qt.AlignVCenter
-                  Layout.topMargin: 4
-                  onToggled: root.openOnly = checked
+                indicator: BorderSurface {
+                  implicitWidth: Style.space(14)
+                  implicitHeight: Style.space(14)
+                  x: 0
+                  y: (hideDoneCheck.height - height) / 2
+                  radius: Math.max(2, Style.cornerRadius * 0.4)
+                  color: hideDoneCheck.checked
+                    ? Style.selectedFillFor(root.foreground, root.accent)
+                    : "transparent"
+                  borderSpec: Border.controlSpec(
+                    hideDoneCheck.checked ? "selected" : "normal",
+                    root.foreground,
+                    root.accent)
 
-                  indicator: BorderSurface {
-                    implicitWidth: Style.space(14)
-                    implicitHeight: Style.space(14)
-                    x: 0
-                    y: (hideDoneCheck.height - height) / 2
-                    radius: Math.max(2, Style.cornerRadius * 0.4)
-                    color: hideDoneCheck.checked
-                      ? Style.selectedFillFor(root.foreground, root.accent)
-                      : "transparent"
-                    borderSpec: Border.controlSpec(
-                      hideDoneCheck.checked ? "selected" : "normal",
-                      root.foreground,
-                      root.accent)
-
-                    Text {
-                      anchors.centerIn: parent
-                      visible: hideDoneCheck.checked
-                      text: "\u2713"
-                      color: root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      font.bold: true
-                    }
-                  }
-
-                  contentItem: Text {
-                    leftPadding: hideDoneCheck.indicator.width + hideDoneCheck.spacing
-                    text: hideDoneCheck.text
-                    textFormat: Text.PlainText
-                    color: root.dim
+                  Text {
+                    anchors.centerIn: parent
+                    visible: hideDoneCheck.checked
+                    text: "\u2713"
+                    color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     font.bold: true
-                    verticalAlignment: Text.AlignVCenter
                   }
                 }
-              }
 
-              Text {
-                width: parent.width
-                visible: root.shownTodos.length === 0
-                topPadding: Style.space(8)
-                bottomPadding: Style.space(8)
-                text: root.emptyText
-                textFormat: Text.PlainText
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
+                contentItem: Text {
+                  leftPadding: hideDoneCheck.indicator.width + hideDoneCheck.spacing
+                  text: hideDoneCheck.text
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  verticalAlignment: Text.AlignVCenter
+                }
               }
+            }
+          }
+        }
 
-              Column {
-                id: todoColumn
-                width: parent.width
-                spacing: Style.space(4)
-                visible: root.shownTodos.length > 0
+      Flickable {
+        id: panelFlick
+        anchors.top: headerColumn.bottom
+        anchors.topMargin: visible ? Style.space(8) : 0
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: addTodoFooter.top
+        anchors.bottomMargin: visible ? Style.space(12) : 0
+        visible: !root.vaultSetupError
+        contentWidth: width
+        contentHeight: todoViewportContent.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        Column {
+          id: todoViewportContent
+          width: panelFlick.width
+
+          Text {
+            width: parent.width
+            visible: root.shownTodos.length === 0
+            topPadding: Style.space(8)
+            bottomPadding: Style.space(8)
+            text: root.emptyText
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+          }
+
+          Column {
+            id: todoColumn
+            width: parent.width
+            spacing: Style.space(4)
+            visible: root.shownTodos.length > 0
 
                 Repeater {
                   model: root.shownTodos
@@ -756,9 +765,6 @@ Panel {
                     }
                   }
                 }
-              }
-
-            }
           }
         }
       }
