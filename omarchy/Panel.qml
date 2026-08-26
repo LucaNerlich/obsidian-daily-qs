@@ -68,7 +68,10 @@ Panel {
     ? shownTodos[selectedIndex] : null
 
   onSearchAvailableChanged: {
-    if (!root.searchAvailable) root.searchText = ""
+    if (!root.searchAvailable) {
+      root.searchText = ""
+      if (searchField.activeFocus) inputField.forceActiveFocus()
+    }
   }
 
   function focusCapture() {
