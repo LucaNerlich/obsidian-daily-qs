@@ -37,6 +37,7 @@ Panel {
   readonly property int openCount: hasWatcher ? Number(watcher.viewOpenCount || 0) : 0
   readonly property int doneCount: hasWatcher ? Number(watcher.viewDoneCount || 0) : 0
   readonly property var todos: hasWatcher ? (watcher.viewTodos || []) : []
+  readonly property bool searchAvailable: root.todos.length >= 3
   readonly property string error: hasWatcher ? String(watcher.viewError || "") : ""
   readonly property string errorCode: hasWatcher ? String(watcher.viewErrorCode || "") : ""
   readonly property int carryOverCount: hasWatcher ? Number(watcher.viewCarryOverCount || 0) : 0
@@ -64,6 +65,10 @@ Panel {
   readonly property color iconColor: root.statusState === "error" ? root.urgent : root.foreground
   readonly property var selectedTodo: (selectedIndex >= 0 && selectedIndex < shownTodos.length)
     ? shownTodos[selectedIndex] : null
+
+  onSearchAvailableChanged: {
+    if (!root.searchAvailable) root.searchText = ""
+  }
 
   function focusCapture() {
     if (root.vaultSetupError)
@@ -293,7 +298,7 @@ Panel {
       onActivateRequested: root.activateSelected()
       onDeleteRequested: root.deleteSelected()
       onTextKey: function(t) {
-        if (t === "/") {
+        if (t === "/" && root.searchAvailable) {
           searchField.forceActiveFocus()
         } else if (t === "[") {
           root.indentSelected(-1)
@@ -501,6 +506,7 @@ Panel {
               RowLayout {
                 width: parent.width
                 spacing: Style.space(6)
+                visible: root.searchAvailable
 
                 TextField {
                   id: searchField
@@ -798,7 +804,7 @@ Panel {
                 event.accepted = true
                 return
               }
-              if (event.text === "/" && inputField.text === "") {
+              if (event.text === "/" && inputField.text === "" && root.searchAvailable) {
                 searchField.forceActiveFocus()
                 event.accepted = true
               }
