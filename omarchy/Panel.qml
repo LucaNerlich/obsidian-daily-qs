@@ -494,43 +494,6 @@ Panel {
                 spacing: Style.space(6)
 
                 TextField {
-                  id: inputField
-                  Layout.fillWidth: true
-                  placeholderText: "Add a todo…"
-                  foreground: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  onAccepted: root.addTodo(false)
-                  Keys.onEscapePressed: root.close()
-                  Keys.onPressed: function(event) {
-                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                        && (event.modifiers & Qt.ShiftModifier)) {
-                      root.addTodo(true)
-                      event.accepted = true
-                      return
-                    }
-                    if (event.text === "/" && inputField.text === "") {
-                      searchField.forceActiveFocus()
-                      event.accepted = true
-                    }
-                  }
-                }
-
-                PanelActionButton {
-                  iconText: "+"
-                  tooltipText: "Add todo"
-                  bordered: true
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  onClicked: root.addTodo(false)
-                }
-              }
-
-              RowLayout {
-                width: parent.width
-                spacing: Style.space(6)
-
-                TextField {
                   id: searchField
                   Layout.fillWidth: true
                   placeholderText: "Search todos… ( / )"
@@ -744,6 +707,44 @@ Panel {
                       }
                     }
                   }
+                }
+              }
+
+              RowLayout {
+                id: addTodoRow
+                width: parent.width
+                spacing: Style.space(6)
+
+                TextField {
+                  id: inputField
+                  Layout.fillWidth: true
+                  placeholderText: "Add a todo…"
+                  foreground: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  onAccepted: root.addTodo(false)
+                  Keys.onEscapePressed: root.close()
+                  Keys.onPressed: function(event) {
+                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                        && (event.modifiers & Qt.ShiftModifier)) {
+                      root.addTodo(true)
+                      event.accepted = true
+                      return
+                    }
+                    if (event.text === "/" && inputField.text === "") {
+                      searchField.forceActiveFocus()
+                      event.accepted = true
+                    }
+                  }
+                }
+
+                PanelActionButton {
+                  iconText: "+"
+                  tooltipText: "Add todo"
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.addTodo(false)
                 }
               }
             }
