@@ -123,10 +123,10 @@ fn filter_todos_by_heading(
                 let start = i + 2;
                 let mut j = i + 1;
                 while j < lines.len() {
-                    if let Some(next) = heading_re.captures(lines[j]) {
-                        if next[1].len() <= level {
-                            break;
-                        }
+                    if let Some(next) = heading_re.captures(lines[j])
+                        && next[1].len() <= level
+                    {
+                        break;
                     }
                     j += 1;
                 }
@@ -344,10 +344,10 @@ pub fn ensure_note(
 }
 
 fn load_template_body(vault: &Vault, config: &DailyNotesConfig, date: NaiveDate) -> String {
-    if let Some(template_path) = vault.template_path(config) {
-        if let Ok(raw) = fs::read_to_string(&template_path) {
-            return expand_template(&raw, date);
-        }
+    if let Some(template_path) = vault.template_path(config)
+        && let Ok(raw) = fs::read_to_string(&template_path)
+    {
+        return expand_template(&raw, date);
     }
     format!("# {}\n", date.format("%Y-%m-%d"))
 }
@@ -713,12 +713,11 @@ fn insert_todo_lines(content: &str, items: &[String]) -> String {
                 let trimmed = lines[section_end].trim_start();
                 if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
                     in_fence = !in_fence;
-                } else if !in_fence {
-                    if let Some(next) = any_heading.captures(lines[section_end]) {
-                        if next[1].len() <= level {
-                            break;
-                        }
-                    }
+                } else if !in_fence
+                    && let Some(next) = any_heading.captures(lines[section_end])
+                    && next[1].len() <= level
+                {
+                    break;
                 }
                 section_end += 1;
             }

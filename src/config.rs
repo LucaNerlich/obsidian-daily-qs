@@ -220,14 +220,14 @@ fn ensure_under_root(root: &Path, path: &Path) -> Result<(), VaultError> {
             path.display()
         )));
     }
-    if let (Ok(real), Ok(real_root)) = (path.canonicalize(), root.canonicalize()) {
-        if !real.starts_with(&real_root) {
-            return Err(VaultError::Io(format!(
-                "resolved path escapes vault root: {} resolves to {}",
-                path.display(),
-                real.display()
-            )));
-        }
+    if let (Ok(real), Ok(real_root)) = (path.canonicalize(), root.canonicalize())
+        && !real.starts_with(&real_root)
+    {
+        return Err(VaultError::Io(format!(
+            "resolved path escapes vault root: {} resolves to {}",
+            path.display(),
+            real.display()
+        )));
     }
     Ok(())
 }
