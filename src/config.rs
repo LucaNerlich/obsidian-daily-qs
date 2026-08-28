@@ -545,6 +545,55 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn no_archive_config_keeps_primary_resolution() {
+        // Without an archive pattern the resolution must be exactly the old
+        // behavior, regardless of what exists on disk.
+        let root = tmp_vault("no-archive-default");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let cfg = vault.daily_notes_config().unwrap();
+        assert_eq!(cfg.archive, None);
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+
+        // Nothing exists yet.
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.resolved, paths.primary);
+        assert_eq!(paths.primary, root.join("Daily").join("2026-08-20.md"));
+
+        // A note exists at the live path.
+        fs::create_dir_all(root.join("Daily")).unwrap();
+        fs::write(root.join("Daily/2026-08-20.md"), "- [ ] x\n").unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.resolved, paths.primary);
+
+        // Even a folder that looks like an archive must be ignored without
+        // an explicit archive pattern.
+        let decoy = root.join("Daily/_archive/2026/2026-08-20.md");
+        fs::create_dir_all(decoy.parent().unwrap()).unwrap();
+        fs::write(&decoy, "- [ ] decoy\n").unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.resolved, root.join("Daily").join("2026-08-20.md"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_config_tolerates_null_and_unknown_keys() {
+        let root = tmp_vault("archive-null");
+        fs::write(
+            root.join(".obsidian/daily-qs.json"),
+            r#"{"archive":null,"futureSetting":true}"#,
+        )
+        .unwrap();
+        let vault = Vault { root };
+        let cfg = vault.daily_notes_config().unwrap();
+        assert_eq!(cfg.archive, None);
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_note_path_escaping_via_symlink() {
