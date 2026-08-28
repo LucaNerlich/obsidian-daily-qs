@@ -28,6 +28,11 @@ struct Cli {
     #[arg(long, global = true)]
     vault: Option<PathBuf>,
 
+    /// Optional archive folder pattern relative to the vault root
+    /// (moment-style, e.g. dailies/_archive/YYYY) where old daily notes live
+    #[arg(long, global = true)]
+    archive_folder: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -128,19 +133,24 @@ enum Command {
 fn main() {
     let cli = Cli::parse();
     let vault_arg = cli.vault.clone();
+    let archive_arg = cli.archive_folder.clone();
     match cli.command {
         Command::Status { date, heading } => emit(run(
             vault_arg,
+            archive_arg,
             |vault, d| read_snapshot_filtered(vault, d, heading.as_deref()),
             date,
         )),
-        Command::Watch { heading } => watch::watch(vault_arg, heading),
+        Command::Watch { heading } => {
+            watch::watch(cli.vault.clone(), cli.archive_folder.clone(), heading)
+        }
         Command::Add {
             text,
             date,
             under_line,
         } => emit(run(
             vault_arg,
+            archive_arg,
             |vault, d| add_todo_under(vault, d, &text, under_line),
             date,
         )),
@@ -150,6 +160,7 @@ fn main() {
             date,
         } => emit(run(
             vault_arg,
+            archive_arg,
             |vault, d| toggle_todo(vault, d, line, expect_text.as_deref()),
             date,
         )),
@@ -160,6 +171,7 @@ fn main() {
             date,
         } => emit(run(
             vault_arg,
+            archive_arg,
             |vault, d| edit_todo(vault, d, line, expect_text.as_deref(), &text),
             date,
         )),
@@ -170,6 +182,7 @@ fn main() {
             date,
         } => emit(run(
             vault_arg,
+            archive_arg,
             |vault, d| delete_todo(vault, d, line, expect_text.as_deref(), with_children),
             date,
         )),
@@ -179,6 +192,7 @@ fn main() {
             date,
         } => emit(run(
             vault_arg,
+            archive_arg,
             |vault, d| set_indent(vault, d, line, expect_text.as_deref(), 1),
             date,
         )),
@@ -188,10 +202,11 @@ fn main() {
             date,
         } => emit(run(
             vault_arg,
+            archive_arg,
             |vault, d| set_indent(vault, d, line, expect_text.as_deref(), -1),
             date,
         )),
-        Command::Undo => emit(match Vault::resolve(vault_arg) {
+        Command::Undo => emit(match Vault::resolve(vault_arg, archive_arg) {
             Ok(vault) => match undo_last(&vault) {
                 Ok(snap) => snap,
                 Err(err) => Snapshot::error_with_code(err.to_string(), err.error_code()),
@@ -199,7 +214,7 @@ fn main() {
             Err(err) => Snapshot::error_with_code(err.to_string(), err.error_code()),
         }),
         Command::Week { date } => {
-            let out = match Vault::resolve(vault_arg) {
+            let out = match Vault::resolve(vault_arg, archive_arg) {
                 Ok(vault) => match parse_date(date) {
                     Ok(d) => match week_summary(&vault, d) {
                         Ok(w) => w,
@@ -211,16 +226,21 @@ fn main() {
             };
             emit_json(&out);
         }
-        Command::CarryOver { date } => emit(run(vault_arg, carry_over, date)),
-        Command::Open { date } => emit(run(vault_arg, open_in_obsidian, date)),
+        Command::CarryOver { date } => emit(run(vault_arg, archive_arg, carry_over, date)),
+        Command::Open { date } => emit(run(vault_arg, archive_arg, open_in_obsidian, date)),
     }
 }
 
-fn run<F>(vault_arg: Option<PathBuf>, f: F, date: Option<String>) -> Snapshot
+fn run<F>(
+    vault_arg: Option<PathBuf>,
+    archive_arg: Option<String>,
+    f: F,
+    date: Option<String>,
+) -> Snapshot
 where
     F: FnOnce(&Vault, NaiveDate) -> Result<Snapshot, obsidian_daily_qs::VaultError>,
 {
-    match Vault::resolve(vault_arg) {
+    match Vault::resolve(vault_arg, archive_arg) {
         Ok(vault) => match parse_date(date) {
             Ok(d) => match f(&vault, d) {
                 Ok(snap) => snap,

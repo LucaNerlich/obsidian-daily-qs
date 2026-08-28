@@ -9,15 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Archive folder support: configure an optional archive location in a new
-  `.obsidian/daily-qs.json` vault file (e.g.
-  `{ "archive": "dailies/_archive/YYYY" }`) and past daily notes that were
-  manually moved out of the live daily-notes folder are still found. The
-  week strip shows their todo counts, and toggling/adding/editing/undo and
-  open-in-Obsidian work on archived notes in place. The pattern supports the
-  same moment-style tokens as the note format (`YYYY`, `MM`, `DD`, …); the
-  live note always wins when it exists in both places, and new notes are
-  still created in the live folder.
+- Archive folder support: configure an optional archive location via the new
+  `archiveFolder` bar setting (or `--archive-folder` on the backend), e.g.
+  `omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'`.
+  Past daily notes that were manually moved out of the live daily-notes
+  folder are then still found: the week strip shows their todo counts, and
+  toggling/adding/editing/undo and open-in-Obsidian work on archived notes in
+  place. The pattern supports the same moment-style tokens as the note format
+  (`YYYY`, `MM`, `DD`, …); the live note always wins when it exists in both
+  places, and new notes are still created in the live folder. Leaving the
+  setting empty keeps the previous behavior.
 
 ## [1.7.1] - 2026-08-26
 

@@ -15,10 +15,10 @@ use crate::todos::read_snapshot_filtered;
 const POLL: Duration = Duration::from_secs(1);
 
 /// Stream snapshots: one immediately, then whenever path/mtime/content changes.
-pub fn watch(cli_vault: Option<PathBuf>, heading: Option<String>) {
+pub fn watch(cli_vault: Option<PathBuf>, cli_archive: Option<String>, heading: Option<String>) {
     let mut last_key: Option<String> = None;
     loop {
-        let snap = current_snapshot(cli_vault.clone(), heading.as_deref());
+        let snap = current_snapshot(cli_vault.clone(), cli_archive.clone(), heading.as_deref());
         let key = snapshot_key(&snap);
         if last_key.as_ref() != Some(&key) {
             if !emit(&snap) {
@@ -30,8 +30,12 @@ pub fn watch(cli_vault: Option<PathBuf>, heading: Option<String>) {
     }
 }
 
-pub fn current_snapshot(cli_vault: Option<PathBuf>, heading: Option<&str>) -> Snapshot {
-    match Vault::resolve(cli_vault) {
+pub fn current_snapshot(
+    cli_vault: Option<PathBuf>,
+    cli_archive: Option<String>,
+    heading: Option<&str>,
+) -> Snapshot {
+    match Vault::resolve(cli_vault, cli_archive) {
         Ok(vault) => {
             let date = Local::now().date_naive();
             match read_snapshot_filtered(&vault, date, heading) {

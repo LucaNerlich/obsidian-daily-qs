@@ -75,8 +75,8 @@ pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultEr
 }
 
 /// Resolve the path of `date`'s note: the live daily-notes folder wins, but a
-/// note manually moved into the configured archive folder
-/// (`.obsidian/daily-qs.json` → `archive`) is still found.
+/// note manually moved into the archive folder configured via
+/// `--archive-folder` / the `archiveFolder` bar setting is still found.
 fn resolved_note_path(
     vault: &Vault,
     config: &DailyNotesConfig,
@@ -977,7 +977,14 @@ mod tests {
         let note = root.join("Daily").join("2026-08-20.md");
         fs::create_dir_all(note.parent().unwrap()).unwrap();
         fs::write(&note, content).unwrap();
-        (Vault { root }, date, note)
+        (
+            Vault {
+                root,
+                archive: None,
+            },
+            date,
+            note,
+        )
     }
 
     #[test]
@@ -1151,7 +1158,10 @@ mod tests {
             "# {{date:YYYY-MM-DD}}\n\n## Tasks\n\n",
         )
         .unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         add_todo(&vault, date, "first").unwrap();
         let note = root.join("Daily/2026-08-20.md");
@@ -1285,7 +1295,10 @@ mod tests {
             "- [ ] drag along\n  - [ ] nested\n- [x] done yesterday\n",
         )
         .unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let snap = carry_over(&vault, date).unwrap();
         let todos = snap.todos.unwrap();
@@ -1320,7 +1333,10 @@ mod tests {
             "- [ ] drag along\n  - [ ] nested\n- [x] done yesterday\n",
         )
         .unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // First write of the new day creates the note and rolls yesterday's
         // open todos into it.
@@ -1380,7 +1396,10 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         let daily = root.join("Daily");
         symlink(&outside, &daily).unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // Note creation must fail before any directory is created through
         // the symlinked folder outside the vault.
@@ -1471,11 +1490,6 @@ mod tests {
             r#"{"folder":"dailies","format":"YYYY-MM-DD"}"#,
         )
         .unwrap();
-        fs::write(
-            root.join(".obsidian/daily-qs.json"),
-            r#"{"archive":"dailies/_archive/YYYY"}"#,
-        )
-        .unwrap();
         let archived = root
             .join("dailies/_archive")
             .join(date.format("%Y").to_string())
@@ -1483,7 +1497,10 @@ mod tests {
             .with_extension("md");
         fs::create_dir_all(archived.parent().unwrap()).unwrap();
         fs::write(&archived, content).unwrap();
-        let vault = Vault { root };
+        let vault = Vault {
+            root,
+            archive: Some("dailies/_archive/YYYY".into()),
+        };
         (vault, archived)
     }
 
