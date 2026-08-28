@@ -24,6 +24,10 @@ pub struct DailyNotesConfig {
     pub format: String,
     /// Optional template note path relative to the vault root (no `.md`).
     pub template: Option<String>,
+    /// Optional moment-style archive folder pattern relative to the vault
+    /// root (e.g. `dailies/_archive/YYYY`). Older notes moved here are still
+    /// found when the live path does not exist.
+    pub archive: Option<String>,
 }
 
 impl Default for DailyNotesConfig {
@@ -32,8 +36,21 @@ impl Default for DailyNotesConfig {
             folder: String::new(),
             format: "YYYY-MM-DD".to_string(),
             template: None,
+            archive: None,
         }
     }
+}
+
+/// Locations of a date's note: the canonical live path and the path that
+/// should actually be used (falls back to the archive folder when the live
+/// note is missing).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DailyNotePaths {
+    /// Path in the live daily-notes folder; the creation target.
+    pub primary: PathBuf,
+    /// `primary` when it exists, else the archive path when that exists,
+    /// else `primary`.
+    pub resolved: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +61,13 @@ struct DailyNotesJson {
     format: Option<String>,
     #[serde(default)]
     template: Option<String>,
+}
+
+/// Plugin-specific vault settings (`{ "archive": … }`).
+#[derive(Debug, Deserialize)]
+struct DailyQsJson {
+    #[serde(default)]
+    archive: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,7 +138,11 @@ impl Vault {
     pub fn daily_notes_config(&self) -> Result<DailyNotesConfig, VaultError> {
         let path = self.root.join(".obsidian").join("daily-notes.json");
         if !path.exists() {
-            return Ok(DailyNotesConfig::default());
+            let archive = self.archive_pattern()?;
+            return Ok(DailyNotesConfig {
+                archive,
+                ..DailyNotesConfig::default()
+            });
         }
         let raw = fs::read_to_string(&path)
             .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
@@ -139,7 +167,25 @@ impl Vault {
                 .filter(|s| !s.is_empty())
                 .map(sanitize_rel)
                 .filter(|s| !s.is_empty()),
+            archive: self.archive_pattern()?,
         })
+    }
+
+    /// Read the optional archive folder pattern from `.obsidian/daily-qs.json`.
+    /// A missing file yields `None`; a malformed file is an error.
+    fn archive_pattern(&self) -> Result<Option<String>, VaultError> {
+        let path = self.root.join(".obsidian").join("daily-qs.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(&path)
+            .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+        let parsed: DailyQsJson = serde_json::from_str(&raw)
+            .map_err(|e| VaultError::Io(format!("failed to parse {}: {e}", path.display())))?;
+        Ok(parsed
+            .archive
+            .map(|s| sanitize_rel(s.trim().trim_matches('/').to_string()))
+            .filter(|s| !s.is_empty()))
     }
 
     pub fn daily_note_path(
@@ -157,6 +203,56 @@ impl Vault {
         }
         // Format may include `/` for year/month subfolders.
         for part in relative.split('/') {
+            push_safe_component(&mut path, part)?;
+        }
+        if path.extension().is_none() {
+            path.set_extension("md");
+        }
+        ensure_under_root(&self.root, &path)?;
+        Ok(path)
+    }
+
+    /// Resolve where `date`'s note actually lives. The primary path wins when
+    /// it exists; otherwise a configured archive pattern
+    /// (`.obsidian/daily-qs.json` → `archive`, e.g. `dailies/_archive/YYYY`)
+    /// is checked. When neither exists the primary path is returned so note
+    /// creation keeps targeting the live folder.
+    pub fn daily_note_paths(
+        &self,
+        config: &DailyNotesConfig,
+        date: NaiveDate,
+    ) -> Result<DailyNotePaths, VaultError> {
+        let primary = self.daily_note_path(config, date)?;
+        let resolved = if config.archive.is_some() && !primary.exists() {
+            let archive = self.archive_note_path(config, date)?;
+            if archive.exists() {
+                archive
+            } else {
+                primary.clone()
+            }
+        } else {
+            primary.clone()
+        };
+        Ok(DailyNotePaths { primary, resolved })
+    }
+
+    /// Build the archived location of `date`'s note from the configured
+    /// moment-style folder pattern (e.g. `dailies/_archive/YYYY`) relative to
+    /// the vault root, appending the formatted note file name from
+    /// `config.format`.
+    pub fn archive_note_path(
+        &self,
+        config: &DailyNotesConfig,
+        date: NaiveDate,
+    ) -> Result<PathBuf, VaultError> {
+        let pattern = config
+            .archive
+            .as_deref()
+            .ok_or_else(|| VaultError::BadFormat("archive pattern is not configured".into()))?;
+        let relative = format::format_moment(pattern, date).map_err(VaultError::BadFormat)?;
+        let name = format::format_moment(&config.format, date).map_err(VaultError::BadFormat)?;
+        let mut path = self.root.clone();
+        for part in relative.split('/').chain(name.split('/')) {
             push_safe_component(&mut path, part)?;
         }
         if path.extension().is_none() {
@@ -310,6 +406,145 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn reads_archive_pattern_from_daily_qs_json() {
+        let root = tmp_vault("archive-config");
+        fs::write(
+            root.join(".obsidian/daily-qs.json"),
+            r#"{"archive":"dailies/_archive/YYYY"}"#,
+        )
+        .unwrap();
+        let vault = Vault { root };
+        let cfg = vault.daily_notes_config().unwrap();
+        assert_eq!(cfg.archive.as_deref(), Some("dailies/_archive/YYYY"));
+    }
+
+    #[test]
+    fn archive_defaults_to_none_without_config_file() {
+        let root = tmp_vault("archive-default");
+        let vault = Vault { root };
+        let cfg = vault.daily_notes_config().unwrap();
+        assert_eq!(cfg.archive, None);
+    }
+
+    #[test]
+    fn empty_archive_pattern_is_none() {
+        let root = tmp_vault("archive-empty");
+        fs::write(root.join(".obsidian/daily-qs.json"), r#"{"archive":"  "}"#).unwrap();
+        let vault = Vault { root };
+        let cfg = vault.daily_notes_config().unwrap();
+        assert_eq!(cfg.archive, None);
+    }
+
+    #[test]
+    fn malformed_archive_config_is_an_error() {
+        let root = tmp_vault("archive-bad");
+        fs::write(root.join(".obsidian/daily-qs.json"), "not json").unwrap();
+        let vault = Vault { root };
+        let err = vault.daily_notes_config().unwrap_err();
+        assert!(err.to_string().contains("failed to parse"));
+    }
+
+    #[test]
+    fn drops_parent_dir_segments_from_archive_pattern() {
+        let root = tmp_vault("archive-escape");
+        fs::write(
+            root.join(".obsidian/daily-qs.json"),
+            r#"{"archive":"../outside/YYYY"}"#,
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let cfg = vault.daily_notes_config().unwrap();
+        assert_eq!(cfg.archive.as_deref(), Some("outside/YYYY"));
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert!(paths.primary.starts_with(&root));
+        // Neither location exists yet: resolved falls back to primary.
+        assert_eq!(paths.resolved, paths.primary);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_archive_path_when_primary_is_missing() {
+        let root = tmp_vault("archive-resolve");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"dailies","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".obsidian/daily-qs.json"),
+            r#"{"archive":"dailies/_archive/YYYY"}"#,
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let cfg = vault.daily_notes_config().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        // Nothing exists yet: resolved falls back to primary.
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.primary, root.join("dailies").join("2026-08-20.md"));
+        assert_eq!(paths.resolved, paths.primary);
+        // Archive note exists: resolved points there.
+        let archived = root.join("dailies/_archive/2026/2026-08-20.md");
+        fs::create_dir_all(archived.parent().unwrap()).unwrap();
+        fs::write(&archived, "- [ ] old\n").unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.resolved, archived);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn primary_path_wins_over_archive() {
+        let root = tmp_vault("archive-primary-wins");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"dailies","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".obsidian/daily-qs.json"),
+            r#"{"archive":"dailies/_archive/YYYY"}"#,
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let cfg = vault.daily_notes_config().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let live = root.join("dailies/2026-08-20.md");
+        fs::create_dir_all(live.parent().unwrap()).unwrap();
+        fs::write(&live, "- [ ] live\n").unwrap();
+        let archived = root.join("dailies/_archive/2026/2026-08-20.md");
+        fs::create_dir_all(archived.parent().unwrap()).unwrap();
+        fs::write(&archived, "- [ ] archived\n").unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.resolved, live);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_pattern_supports_full_date_tokens() {
+        let root = tmp_vault("archive-flat");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"dailies","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".obsidian/daily-qs.json"),
+            r#"{"archive":"dailies/_archive/YYYY/MM"}"#,
+        )
+        .unwrap();
+        let vault = Vault { root: root.clone() };
+        let cfg = vault.daily_notes_config().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.primary, root.join("dailies").join("2026-08-20.md"));
+        assert_eq!(
+            root.join("dailies/_archive/2026/08/2026-08-20.md"),
+            vault.archive_note_path(&cfg, date).unwrap()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_note_path_escaping_via_symlink() {
@@ -335,6 +570,7 @@ mod tests {
             folder: "Daily".into(),
             format: "YYYY-MM-DD".into(),
             template: None,
+            archive: None,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let err = vault.daily_note_path(&cfg, date).unwrap_err();

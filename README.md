@@ -14,7 +14,7 @@ Omarchy Quattro bar widget for today's [Obsidian daily note](https://obsidian.md
 - A supported architecture: x86_64 or aarch64 (arm64)
 - Vault path via the `vaultPath` bar setting **or** `OBSIDIAN_VAULT_ROOT` for the graphical session — see [Set the vault path](#set-the-vault-path)
 
-Daily note location and date format are read from `.obsidian/daily-notes.json` (`folder`, `format`, optional `template`), relative to the vault root.
+Daily note location and date format are read from `.obsidian/daily-notes.json` (`folder`, `format`, optional `template`), relative to the vault root. An optional archive location can be configured in `.obsidian/daily-qs.json` — see [Archived notes](#archived-notes).
 
 ## Architecture
 
@@ -72,6 +72,29 @@ hyprctl reload && omarchy restart shell
 # ~/.config/environment.d/obsidian-vault.conf
 OBSIDIAN_VAULT_ROOT=/home/you/Documents/notizen
 ```
+
+### Archived notes
+
+If you move old daily notes out of the live daily-notes folder (for example
+into `dailies/_archive/2026/`), tell the backend where they went via a new
+vault file `.obsidian/daily-qs.json`:
+
+```json
+{ "archive": "dailies/_archive/YYYY" }
+```
+
+- The `archive` value is a folder pattern relative to the vault root, using
+  the same moment-style tokens as the note format (`YYYY`, `YY`, `MMMM`,
+  `MMM`, `MM`, `M`, `dddd`, `ddd`, `DD`, `D`). The formatted note file name is
+  appended, so with `format: "YYYY-MM-DD"` the example above resolves
+  `2026-08-20` to `dailies/_archive/2026/2026-08-20.md`.
+- The live path always wins: when a note exists in both places the live one is
+  used, and new notes are always created in the live folder.
+- Archived days are fully usable: the week strip shows their open/done
+  counts, and toggling, adding, editing, indenting, undo and open-in-Obsidian
+  all work on the archived note in place.
+- Omit the file (or the `archive` key) to keep the default behavior of only
+  looking in the live daily-notes folder.
 
 ## Usage
 
