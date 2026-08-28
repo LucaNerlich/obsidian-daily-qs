@@ -215,9 +215,9 @@ impl Vault {
         date: NaiveDate,
     ) -> Result<DailyNotePaths, VaultError> {
         let primary = self.daily_note_path(config, date)?;
-        let resolved = if config.archive.is_some() && !primary.exists() {
+        let resolved = if config.archive.is_some() && !primary.is_file() {
             let archive = self.archive_note_path(config, date)?;
-            if archive.exists() {
+            if archive.is_file() {
                 archive
             } else {
                 primary.clone()
@@ -534,6 +534,41 @@ mod tests {
         fs::write(&decoy, "- [ ] decoy\n").unwrap();
         let paths = vault.daily_note_paths(&cfg, date).unwrap();
         assert_eq!(paths.resolved, root.join("Daily").join("2026-08-20.md"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolution_skips_directories_named_like_notes() {
+        let root = tmp_vault("archive-dir");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"dailies","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: Some("dailies/_archive/YYYY".into()),
+        };
+        let cfg = vault.daily_notes_config().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+
+        // A directory at the live note path must not be resolved as a note;
+        // the real archived file wins instead.
+        let dir_as_note = root.join("dailies/2026-08-20.md");
+        fs::create_dir_all(&dir_as_note).unwrap();
+        let archived = root.join("dailies/_archive/2026/2026-08-20.md");
+        fs::create_dir_all(archived.parent().unwrap()).unwrap();
+        fs::write(&archived, "- [ ] archived\n").unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.resolved, archived);
+
+        // A directory at the archive path must not win over the (missing)
+        // primary: resolved falls back to primary.
+        fs::remove_dir_all(&dir_as_note).unwrap();
+        fs::remove_file(&archived).unwrap();
+        fs::create_dir_all(&archived).unwrap();
+        let paths = vault.daily_note_paths(&cfg, date).unwrap();
+        assert_eq!(paths.resolved, paths.primary);
         let _ = fs::remove_dir_all(root);
     }
 
