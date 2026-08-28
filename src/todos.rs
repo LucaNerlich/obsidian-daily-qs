@@ -74,6 +74,17 @@ pub fn read_snapshot(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultEr
     read_snapshot_filtered(vault, date, None)
 }
 
+/// Resolve the path of `date`'s note: the live daily-notes folder wins, but a
+/// note manually moved into the archive folder configured via
+/// `--archive-folder` / the `archiveFolder` bar setting is still found.
+fn resolved_note_path(
+    vault: &Vault,
+    config: &DailyNotesConfig,
+    date: NaiveDate,
+) -> Result<PathBuf, VaultError> {
+    Ok(vault.daily_note_paths(config, date)?.resolved)
+}
+
 /// Like [`read_snapshot`], but when `heading` is set only todos under a
 /// matching markdown heading (until the next same-or-higher heading) are
 /// included.
@@ -83,7 +94,7 @@ pub fn read_snapshot_filtered(
     heading: Option<&str>,
 ) -> Result<Snapshot, VaultError> {
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let path_str = path.display().to_string();
     let todos = if path.exists() {
@@ -167,7 +178,7 @@ fn enrich_snapshot(
 
 fn open_todo_count(vault: &Vault, date: NaiveDate) -> Result<usize, VaultError> {
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
         return Ok(0);
     }
@@ -183,7 +194,7 @@ struct OpenTodo {
 
 fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, VaultError> {
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -215,7 +226,7 @@ fn move_open_from_previous(vault: &Vault, date: NaiveDate) -> Result<usize, Vaul
     // emptying the previous note) before the outer add_todo_lines appended
     // the same lines again — duplicating every carried todo.
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     create_note_if_missing(vault, &config, &path, date)?;
     let items = open_todo_items(vault, prev)?;
     if items.is_empty() {
@@ -262,7 +273,7 @@ fn remove_todos(
     items: &[(usize, String)],
 ) -> Result<(), VaultError> {
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
         return Ok(());
     }
@@ -387,7 +398,7 @@ pub fn add_todo_under(
                 return Err(VaultError::Io("under-line must be >= 1".into()));
             }
             let config = vault.daily_notes_config()?;
-            let path = vault.daily_note_path(&config, date)?;
+            let path = resolved_note_path(vault, &config, date)?;
             ensure_note(vault, &config, &path, date)?;
             let content = fs::read_to_string(&path)
                 .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
@@ -425,7 +436,7 @@ fn add_todo_lines(
     items: &[(usize, String)],
 ) -> Result<(), VaultError> {
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     ensure_note(vault, &config, &path, date)?;
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
@@ -481,7 +492,7 @@ pub fn toggle_todo(
         return Err(VaultError::Io("line must be >= 1".into()));
     }
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
         return Err(VaultError::Io(format!(
             "daily note does not exist: {}",
@@ -514,7 +525,7 @@ pub fn edit_todo(
         return Err(VaultError::Io("todo text must be a single line".into()));
     }
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
         return Err(VaultError::Io(format!(
             "daily note does not exist: {}",
@@ -556,7 +567,7 @@ pub fn delete_todo(
         return Err(VaultError::Io("line must be >= 1".into()));
     }
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
         return Err(VaultError::Io(format!(
             "daily note does not exist: {}",
@@ -610,7 +621,7 @@ pub fn set_indent(
         return read_snapshot(vault, date);
     }
     let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
+    let path = resolved_note_path(vault, &config, date)?;
     if !path.exists() {
         return Err(VaultError::Io(format!(
             "daily note does not exist: {}",
@@ -966,7 +977,14 @@ mod tests {
         let note = root.join("Daily").join("2026-08-20.md");
         fs::create_dir_all(note.parent().unwrap()).unwrap();
         fs::write(&note, content).unwrap();
-        (Vault { root }, date, note)
+        (
+            Vault {
+                root,
+                archive: None,
+            },
+            date,
+            note,
+        )
     }
 
     #[test]
@@ -1140,7 +1158,10 @@ mod tests {
             "# {{date:YYYY-MM-DD}}\n\n## Tasks\n\n",
         )
         .unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         add_todo(&vault, date, "first").unwrap();
         let note = root.join("Daily/2026-08-20.md");
@@ -1201,6 +1222,7 @@ mod tests {
             folder: "Daily".into(),
             format: "YYYY-MM-DD".into(),
             template: None,
+            archive: None,
         };
         assert!(!ensure_note(&vault, &config, &note, date).unwrap());
         assert_eq!(fs::read_to_string(&note).unwrap(), "keep\n");
@@ -1273,7 +1295,10 @@ mod tests {
             "- [ ] drag along\n  - [ ] nested\n- [x] done yesterday\n",
         )
         .unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let snap = carry_over(&vault, date).unwrap();
         let todos = snap.todos.unwrap();
@@ -1308,7 +1333,10 @@ mod tests {
             "- [ ] drag along\n  - [ ] nested\n- [x] done yesterday\n",
         )
         .unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // First write of the new day creates the note and rolls yesterday's
         // open todos into it.
@@ -1368,7 +1396,10 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         let daily = root.join("Daily");
         symlink(&outside, &daily).unwrap();
-        let vault = Vault { root: root.clone() };
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // Note creation must fail before any directory is created through
         // the symlinked folder outside the vault.
@@ -1446,5 +1477,100 @@ mod tests {
         assert!(fs::read_to_string(&note).unwrap().starts_with("- [x] open"));
         let _ = fs::remove_dir_all(vault.root());
         let _ = fs::remove_dir_all(outside);
+    }
+
+    /// Vault with an archive pattern configured and an archived note for
+    /// `date` under `dailies/_archive/YYYY`, with no live note.
+    fn archived_vault(date: NaiveDate, content: &str) -> (Vault, std::path::PathBuf) {
+        let root = unique_temp("archived");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"dailies","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        let archived = root
+            .join("dailies/_archive")
+            .join(date.format("%Y").to_string())
+            .join(date.format("%Y-%m-%d").to_string())
+            .with_extension("md");
+        fs::create_dir_all(archived.parent().unwrap()).unwrap();
+        fs::write(&archived, content).unwrap();
+        let vault = Vault {
+            root,
+            archive: Some("dailies/_archive/YYYY".into()),
+        };
+        (vault, archived)
+    }
+
+    #[test]
+    fn read_snapshot_finds_archived_note() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let (vault, archived) =
+            archived_vault(date, "# 2026-08-20\n- [ ] old one\n- [x] old done\n");
+        let snap = read_snapshot(&vault, date).unwrap();
+        assert_eq!(snap.exists, Some(true));
+        assert_eq!(snap.path, Some(archived.display().to_string()));
+        let todos = snap.todos.unwrap();
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].text, "old one");
+        assert!(!todos[0].checked);
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn week_summary_counts_archived_days() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 19).unwrap(); // Wednesday
+        let (vault, _) = archived_vault(date, "- [ ] open from archive\n- [x] done from archive\n");
+        let week = week_summary(&vault, date).unwrap();
+        let days = week.days.unwrap();
+        let wed = days
+            .iter()
+            .find(|d| d.date == "2026-08-19")
+            .expect("wednesday in week");
+        assert!(wed.exists);
+        assert_eq!(wed.open_count, 1);
+        assert_eq!(wed.done_count, 1);
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn toggle_todo_edits_archived_note_in_place() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let (vault, archived) = archived_vault(date, "- [ ] stale task\n");
+        let snap = toggle_todo(&vault, date, 1, None).unwrap();
+        assert_eq!(snap.exists, Some(true));
+        assert_eq!(fs::read_to_string(&archived).unwrap(), "- [x] stale task\n");
+        // The live path must not have been created.
+        assert!(!vault.root().join("dailies/2026-08-20.md").exists());
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_reads_open_todos_from_archived_previous_day() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let (vault, _) = archived_vault(
+            date.checked_sub_days(chrono::Days::new(1)).unwrap(),
+            "- [ ] leftover\n- [x] finished\n",
+        );
+        // Create today's live note so carry-over has a target.
+        let today = vault.root().join("dailies/2026-08-20.md");
+        fs::create_dir_all(today.parent().unwrap()).unwrap();
+        fs::write(&today, "- [ ] already here\n").unwrap();
+        carry_over(&vault, date).unwrap();
+        let body = fs::read_to_string(&today).unwrap();
+        assert!(body.contains("leftover"));
+        assert!(body.contains("already here"));
+        // Archived note keeps only done todos after the move.
+        let prev = date.checked_sub_days(chrono::Days::new(1)).unwrap();
+        let prev_path = vault
+            .root()
+            .join("dailies/_archive")
+            .join(prev.format("%Y").to_string())
+            .join(prev.format("%Y-%m-%d").to_string())
+            .with_extension("md");
+        assert_eq!(fs::read_to_string(&prev_path).unwrap(), "- [x] finished\n");
+        let _ = fs::remove_dir_all(vault.root());
     }
 }

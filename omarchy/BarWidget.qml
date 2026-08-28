@@ -95,6 +95,7 @@ BarWidget {
   readonly property string vaultPathSetting: String(setting("vaultPath", "") || "")
   readonly property string vaultPath: Model.expandPath(vaultPathSetting, homeDir)
   readonly property string todoHeading: String(setting("todoHeading", "") || "").trim()
+  readonly property string archiveFolder: String(setting("archiveFolder", "") || "").trim()
   readonly property bool openOnlyDefault: setting("openOnly", false) === true
   readonly property bool hideWhenDone: setting("hideWhenDone", false) === true
   readonly property bool hideWhenEmpty: setting("hideWhenEmpty", false) === true
@@ -125,6 +126,8 @@ BarWidget {
     var args = []
     if (root.vaultPath !== "")
       args.push("--vault", root.vaultPath)
+    if (root.archiveFolder !== "")
+      args.push("--archive-folder", root.archiveFolder)
     return args
   }
 

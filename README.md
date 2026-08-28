@@ -14,7 +14,7 @@ Omarchy Quattro bar widget for today's [Obsidian daily note](https://obsidian.md
 - A supported architecture: x86_64 or aarch64 (arm64)
 - Vault path via the `vaultPath` bar setting **or** `OBSIDIAN_VAULT_ROOT` for the graphical session — see [Set the vault path](#set-the-vault-path)
 
-Daily note location and date format are read from `.obsidian/daily-notes.json` (`folder`, `format`, optional `template`), relative to the vault root.
+Daily note location and date format are read from `.obsidian/daily-notes.json` (`folder`, `format`, optional `template`), relative to the vault root. An optional archive location can be configured via the `archiveFolder` bar setting — see [Archived notes](#archived-notes).
 
 ## Architecture
 
@@ -73,6 +73,31 @@ hyprctl reload && omarchy restart shell
 OBSIDIAN_VAULT_ROOT=/home/you/Documents/notizen
 ```
 
+### Archived notes
+
+If you move old daily notes out of the live daily-notes folder (for example
+into `dailies/_archive/2026/`), tell the widget where they went via the
+`archiveFolder` bar setting:
+
+```bash
+omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
+```
+
+- The value is a folder pattern relative to the vault root, using the same
+  moment-style tokens as the note format (`YYYY`, `YY`, `MMMM`, `MMM`, `MM`,
+  `M`, `dddd`, `ddd`, `DD`, `D`). The formatted note file name is appended,
+  so with `format: "YYYY-MM-DD"` the example above resolves `2026-08-20` to
+  `dailies/_archive/2026/2026-08-20.md`.
+- The live path always wins: when a note exists in both places the live one is
+  used, and new notes are always created in the live folder.
+- Archived days are fully usable: the week strip shows their open/done
+  counts, and toggling, adding, editing, indenting, undo and open-in-Obsidian
+  all work on the archived note in place.
+- Leaving the setting empty keeps the default behavior of only looking in the
+  live daily-notes folder.
+- The backend also accepts the pattern directly as `--archive-folder` for
+  CLI use, e.g. `obsidian-daily-qs status --date 2026-08-19 --archive-folder 'dailies/_archive/YYYY'`.
+
 ## Usage
 
 - **Bar**: Obsidian mark + done/total for today. Left-click opens the panel; middle/right-click opens the note in Obsidian.
@@ -82,7 +107,7 @@ OBSIDIAN_VAULT_ROOT=/home/you/Documents/notizen
   - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation.
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
   - Search: `/`; open-only toggle; carry over; open in Obsidian.
-- **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `openOnly`, `todoHeading`, `hideWhenDone`, `hideWhenEmpty`.
+- **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `archiveFolder`, `openOnly`, `todoHeading`, `hideWhenDone`, `hideWhenEmpty`.
 
 ```bash
 omarchy bar set luca.obsidian-daily openOnly true
