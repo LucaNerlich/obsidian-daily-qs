@@ -487,19 +487,26 @@ Panel {
                     }
 
                     Rectangle {
+                      id: weekDayDot
                       anchors.horizontalCenter: parent.horizontalCenter
                       width: Style.space(6)
                       height: Style.space(6)
                       radius: width / 2
-                      visible: modelData.openCount > 0
-                      color: modelData.date === root.date ? root.accent : root.foreground
+                      // Solid dot for days with open work; hollow dot for
+                      // days that only hold done todos (e.g. archived notes).
+                      readonly property bool hasOpen: modelData.openCount > 0
+                      readonly property bool hasDone: modelData.exists && modelData.doneCount > 0
+                      visible: hasOpen || hasDone
+                      color: hasOpen ? (modelData.date === root.date ? root.accent : root.foreground) : "transparent"
+                      border.width: hasOpen ? 0 : Math.max(1, Style.space(0.5))
+                      border.color: modelData.date === root.date ? root.accent : root.foreground
                       opacity: modelData.exists ? 1.0 : 0.45
                     }
 
                     Item {
                       width: Style.space(6)
                       height: Style.space(6)
-                      visible: modelData.openCount <= 0
+                      visible: !weekDayDot.visible
                     }
                   }
                 }
