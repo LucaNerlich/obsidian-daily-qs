@@ -123,7 +123,7 @@ enum Command {
         #[arg(long)]
         date: Option<String>,
     },
-    /// Open the daily note in Obsidian (`xdg-open obsidian://…`)
+    /// Create the daily note when missing, then open it in Obsidian
     Open {
         #[arg(long)]
         date: Option<String>,
