@@ -331,8 +331,8 @@ Panel {
 
           PanelHero {
             width: parent.width
-            title: "Obsidian Daily<br><font color=\"" + root.dim + "\">"
-              + (root.date !== "" ? root.date : "Daily note") + "</font>"
+            title: "Obsidian Daily"
+            meta: root.date !== "" ? root.date : "Daily note"
             foreground: root.foreground
             fontFamily: root.fontFamily
 
