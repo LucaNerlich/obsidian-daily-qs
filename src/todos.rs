@@ -309,13 +309,23 @@ pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError
 
 /// Open the daily note in Obsidian via `xdg-open`.
 pub fn open_in_obsidian(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
-    let snap = read_snapshot(vault, date)?;
+    let snap = prepare_note_for_open(vault, date)?;
     let uri = snap
         .obsidian_uri
         .clone()
         .ok_or_else(|| VaultError::Io("missing obsidian URI".into()))?;
     open::launch(&uri)?;
     Ok(snap)
+}
+
+/// Create a missing note from the configured daily-note template before it is
+/// opened. This deliberately skips carry-over: opening a future date must not
+/// move unfinished todos out of the previous day.
+fn prepare_note_for_open(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
+    let config = vault.daily_notes_config()?;
+    let path = resolved_note_path(vault, &config, date)?;
+    create_note_if_missing(vault, &config, &path, date)?;
+    read_snapshot(vault, date)
 }
 
 /// Create the note (and parents) if missing, without rolling over. Returns
@@ -1170,6 +1180,82 @@ mod tests {
         assert!(body.contains("## Tasks"));
         assert!(body.contains("- [ ] first"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepares_missing_note_from_template_before_open() {
+        let root = unique_temp("open-create");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir_all(root.join("Templates")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"YYYY-MM-DD","template":"Templates/Daily"}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("Templates/Daily.md"),
+            "# {{date:YYYY-MM-DD}}\n\n## Tasks\n\n",
+        )
+        .unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
+        let date = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+
+        let snap = prepare_note_for_open(&vault, date).unwrap();
+
+        assert_eq!(snap.exists, Some(true));
+        assert_eq!(
+            fs::read_to_string(root.join("Daily/2026-08-21.md")).unwrap(),
+            "# 2026-08-21\n\n## Tasks\n\n"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preparing_future_note_does_not_carry_over_todos() {
+        let root = unique_temp("open-future");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir_all(root.join("Daily")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        fs::write(root.join("Daily/2026-08-20.md"), "- [ ] keep here\n").unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
+        let date = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+
+        prepare_note_for_open(&vault, date).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("Daily/2026-08-20.md")).unwrap(),
+            "- [ ] keep here\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("Daily/2026-08-21.md")).unwrap(),
+            "# 2026-08-21\n"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preparing_archived_note_does_not_create_a_live_copy() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let (vault, archived) = archived_vault(date, "# Archived\n");
+
+        let snap = prepare_note_for_open(&vault, date).unwrap();
+
+        assert_eq!(snap.path, Some(archived.display().to_string()));
+        assert_eq!(fs::read_to_string(&archived).unwrap(), "# Archived\n");
+        assert!(!vault.root().join("dailies/2026-08-20.md").exists());
+        let _ = fs::remove_dir_all(vault.root());
     }
 
     #[test]

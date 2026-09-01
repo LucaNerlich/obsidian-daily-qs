@@ -106,7 +106,8 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
   - Nested todos render indented; Shift+Enter adds under the selected row.
   - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation.
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
-  - Search: `/`; open-only toggle; carry over; open in Obsidian.
+  - Search: `/`; open-only toggle; carry over; open in Obsidian. Opening a
+    missing day creates its note from the configured daily-note template.
 - **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `archiveFolder`, `openOnly`, `todoHeading`, `hideWhenDone`, `hideWhenEmpty`.
 
 ```bash
