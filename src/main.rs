@@ -10,8 +10,8 @@ use obsidian_daily_qs::config::Vault;
 use obsidian_daily_qs::status::{Snapshot, WeekSummary};
 use obsidian_daily_qs::watch;
 use obsidian_daily_qs::{
-    add_todo_under, carry_over, delete_todo, edit_todo, open_in_obsidian, read_snapshot_filtered,
-    set_indent, toggle_todo, undo_last, week_summary,
+    add_todo_under, carry_over, defer_todo, delete_todo, edit_todo, open_in_obsidian,
+    read_snapshot_filtered, set_indent, toggle_todo, undo_last, week_summary,
 };
 
 #[derive(Parser)]
@@ -84,6 +84,17 @@ enum Command {
     },
     /// Delete a todo (optionally with nested children)
     Delete {
+        #[arg(long)]
+        line: usize,
+        #[arg(long)]
+        expect_text: Option<String>,
+        #[arg(long, default_value_t = false)]
+        with_children: bool,
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Move a todo to the next day's note (creates that note if missing)
+    Defer {
         #[arg(long)]
         line: usize,
         #[arg(long)]
@@ -184,6 +195,17 @@ fn main() {
             vault_arg,
             archive_arg,
             |vault, d| delete_todo(vault, d, line, expect_text.as_deref(), with_children),
+            date,
+        )),
+        Command::Defer {
+            line,
+            expect_text,
+            with_children,
+            date,
+        } => emit(run(
+            vault_arg,
+            archive_arg,
+            |vault, d| defer_todo(vault, d, line, expect_text.as_deref(), with_children),
             date,
         )),
         Command::Indent {

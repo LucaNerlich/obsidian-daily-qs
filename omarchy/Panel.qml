@@ -31,6 +31,10 @@ Panel {
   property int editingLine: -1
   property string editingOriginal: ""
   property int pendingAppendCount: 0
+  property bool todoMenuOpen: false
+  property var todoMenuTodo: null
+  property real todoMenuX: 0
+  property real todoMenuY: 0
 
   readonly property string statusState: hasWatcher ? String(watcher.viewStatusState || "ok") : "ok"
   readonly property string date: hasWatcher ? String(watcher.viewDate || "") : ""
@@ -106,9 +110,41 @@ Panel {
   }
 
   function deleteSelected() {
-    if (!root.selectedTodo) return
+    root.deleteTodo(root.selectedTodo)
+  }
+
+  function deleteTodo(todo) {
+    if (!todo) return
     if (!hasWatcher || typeof watcher.deleteTodo !== "function") return
-    watcher.deleteTodo(root.selectedTodo.line, root.selectedTodo.text, true)
+    root.closeTodoMenu()
+    watcher.deleteTodo(todo.line, todo.text, true)
+  }
+
+  function deferTodo(todo) {
+    if (!todo) return
+    if (!hasWatcher || typeof watcher.deferTodo !== "function") return
+    root.closeTodoMenu()
+    watcher.deferTodo(todo.line, todo.text, true)
+  }
+
+  function closeTodoMenu() {
+    root.todoMenuOpen = false
+    root.todoMenuTodo = null
+  }
+
+  function openTodoMenu(item, todo) {
+    if (!item || !todo) return
+    root.todoMenuTodo = todo
+    root.todoMenuOpen = true
+    Qt.callLater(function() {
+      if (!root.todoMenuOpen || !item || !todoMenuCard) return
+      var p = item.mapToItem(keyCatcher, 0, item.height)
+      var pad = Style.space(8)
+      var w = todoMenuCard.width
+      var h = todoMenuCard.height
+      root.todoMenuX = Math.max(pad, Math.min(p.x, keyCatcher.width - w - pad))
+      root.todoMenuY = Math.max(pad, Math.min(p.y, keyCatcher.height - h - pad))
+    })
   }
 
   function indentSelected(delta) {
@@ -264,6 +300,7 @@ Panel {
   onDateChanged: {
     root.selectedIndex = -1
     root.cancelEdit()
+    root.closeTodoMenu()
     if (panelFlick) panelFlick.contentY = 0
   }
 
@@ -272,10 +309,12 @@ Panel {
       root.searchText = ""
       root.selectedIndex = -1
       root.cancelEdit()
+      root.closeTodoMenu()
       if (panelFlick) panelFlick.contentY = 0
       Qt.callLater(root.focusCapture)
     } else {
       root.cancelEdit()
+      root.closeTodoMenu()
     }
   }
 
@@ -299,8 +338,14 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
       blocked: inputField.activeFocus || searchField.activeFocus
-        || vaultPathField.activeFocus || root.editingLine >= 0
-      onCloseRequested: root.close()
+        || vaultPathField.activeFocus || root.editingLine >= 0 || root.todoMenuOpen
+      onCloseRequested: {
+        if (root.todoMenuOpen) {
+          root.closeTodoMenu()
+          return
+        }
+        root.close()
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onActivateRequested: root.activateSelected()
       onDeleteRequested: root.deleteSelected()
@@ -709,13 +754,19 @@ Panel {
                       hoverEnabled: true
                       enabled: root.editingLine !== modelData.line
                       cursorShape: Qt.PointingHandCursor
-                      acceptedButtons: Qt.LeftButton
-                      onClicked: {
+                      acceptedButtons: Qt.LeftButton | Qt.RightButton
+                      onClicked: function(mouse) {
                         root.selectedIndex = index
+                        if (mouse.button === Qt.RightButton) {
+                          root.openTodoMenu(todoRow, modelData)
+                          return
+                        }
+                        root.closeTodoMenu()
                         root.toggleTodo(modelData.line, modelData.text)
                       }
                       onDoubleClicked: {
                         root.selectedIndex = index
+                        root.closeTodoMenu()
                         root.startEdit(modelData)
                       }
                     }
@@ -839,6 +890,89 @@ Panel {
             foreground: root.foreground
             fontFamily: root.fontFamily
             onClicked: root.addTodo(false)
+          }
+        }
+      }
+
+      Item {
+        anchors.fill: parent
+        visible: root.todoMenuOpen
+        z: 20
+
+        MouseArea {
+          anchors.fill: parent
+          acceptedButtons: Qt.AllButtons
+          onPressed: root.closeTodoMenu()
+        }
+
+        BorderSurface {
+          id: todoMenuCard
+          x: root.todoMenuX
+          y: root.todoMenuY
+          width: Style.space(180)
+          implicitHeight: todoMenuColumn.implicitHeight + Style.spacing.hairline * 2
+          color: Color.popups.background
+          borderSpec: Border.localOrSurfaceSpec("popups", "border", Color.popups.border, Color.popups.border, Style.normalBorderWidth)
+          radius: Style.cornerRadius
+          padding: Style.spacing.hairline
+
+          Column {
+            id: todoMenuColumn
+            width: parent.width
+            spacing: Style.spacing.labelGap
+
+            Repeater {
+              model: [
+                { label: "Do tomorrow", action: "defer" },
+                { label: "Delete", action: "delete" }
+              ]
+
+              delegate: Rectangle {
+                required property var modelData
+                required property int index
+                property bool hovered: menuRowMouse.containsMouse
+                width: todoMenuColumn.width
+                height: Style.spacing.popupRowHeight
+                color: hovered
+                  ? (modelData.action === "delete"
+                    ? Style.hoverFillFor(root.urgent, root.urgent)
+                    : Style.hoverFillFor(root.foreground, root.accent))
+                  : "transparent"
+                radius: Math.max(2, Style.cornerRadius * 0.45)
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.leftMargin: Style.spacing.controlPaddingX
+                  anchors.rightMargin: Style.spacing.controlPaddingX
+                  text: modelData.label
+                  textFormat: Text.PlainText
+                  color: hovered
+                    ? (modelData.action === "delete"
+                      ? Style.hoverStateColor(root.urgent, root.urgent)
+                      : Style.hoverStateColor(root.foreground, root.accent))
+                    : (modelData.action === "delete" ? root.urgent : root.foreground)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
+                }
+
+                MouseArea {
+                  id: menuRowMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  acceptedButtons: Qt.LeftButton
+                  onClicked: {
+                    if (modelData.action === "defer")
+                      root.deferTodo(root.todoMenuTodo)
+                    else
+                      root.deleteTodo(root.todoMenuTodo)
+                  }
+                }
+              }
+            }
           }
         }
       }

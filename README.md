@@ -104,6 +104,7 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
 - **Panel**:
   - List todos; click or Enter/Space (with keyboard cursor) to toggle.
   - Nested todos render indented; Shift+Enter adds under the selected row.
+  - Right-click a row to delete it or move it to tomorrow (children included).
   - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation.
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
   - Search: `/`; open-only toggle; carry over; open in Obsidian. Opening a
@@ -128,6 +129,7 @@ obsidian-daily-qs add --text "Nested" --under-line 12
 obsidian-daily-qs toggle --line 12
 obsidian-daily-qs edit --line 12 --text "Renamed" --expect-text "Old"
 obsidian-daily-qs delete --line 12
+obsidian-daily-qs defer --line 12
 obsidian-daily-qs indent --line 12
 obsidian-daily-qs outdent --line 12
 obsidian-daily-qs undo
