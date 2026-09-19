@@ -437,6 +437,23 @@ pub fn add_todo_under(
     read_snapshot(vault, date)
 }
 
+/// How checkbox lists are laid out in this vault's recent daily notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TodoStyle {
+    /// No blank line between sibling todos.
+    compact: bool,
+    /// One blank line between a heading and the first todo.
+    blank_after_heading: bool,
+}
+
+const DEFAULT_TODO_STYLE: TodoStyle = TodoStyle {
+    compact: true,
+    blank_after_heading: true,
+};
+
+/// Look back this many calendar days when the current note has no list yet.
+const TODO_STYLE_LOOKBACK_DAYS: u64 = 14;
+
 /// Append the given `(depth, text)` todos as indented `- [ ] …` lines.
 /// Depths are clamped so each line nests at most one level deeper than the
 /// previous inserted line.
@@ -462,7 +479,8 @@ fn add_todo_lines(
             format!("{}- [ ] {}", "  ".repeat(d), text)
         })
         .collect();
-    let next = insert_todo_lines(&content, &lines);
+    let style = infer_todo_style(vault, date, &content);
+    let next = insert_todo_lines(&content, &lines, style);
     write_atomic_with_undo(vault, date, &path, &content, &next)
 }
 
@@ -718,74 +736,261 @@ pub fn write_atomic_public(
     write_atomic(vault_root, path, content)
 }
 
-fn insert_todo_lines(content: &str, items: &[String]) -> String {
-    let heading = tasks_heading_re();
-    let any_heading = Regex::new(r"^(#{1,6})\s+.+?\s*$").expect("heading regex");
-    let lines: Vec<&str> = content.lines().collect();
-    let mut insert_at: Option<usize> = None;
-    let mut needs_boundary_blank = false;
-    for (idx, line) in lines.iter().enumerate() {
-        if heading.is_match(line) {
-            let level = line.chars().take_while(|ch| *ch == '#').count();
-            let section_start = idx + 1;
-            let mut section_end = section_start;
-            let mut in_fence = false;
-            while section_end < lines.len() {
-                let trimmed = lines[section_end].trim_start();
-                if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                    in_fence = !in_fence;
-                } else if !in_fence
-                    && let Some(next) = any_heading.captures(lines[section_end])
-                    && next[1].len() <= level
-                {
-                    break;
-                }
-                section_end += 1;
-            }
-
-            // Append after the section's existing content while keeping blank
-            // lines that separate it from the next peer heading.
-            let mut at = section_end;
-            while at > section_start && lines[at - 1].trim().is_empty() {
-                at -= 1;
-            }
-            // An otherwise-empty section conventionally keeps one blank line
-            // between its heading and first todo.
-            if at == section_start
-                && section_start < section_end
-                && lines[section_start].trim().is_empty()
-            {
-                at += 1;
-                // If the section contained only a single blank line, there is
-                // no remaining blank-line boundary after the insertion point;
-                // add one so the new todos stay separated from the next peer
-                // heading.
-                if at == section_end {
-                    needs_boundary_blank = true;
-                }
-            }
-            insert_at = Some(at);
+fn infer_todo_style(vault: &Vault, date: NaiveDate, current: &str) -> TodoStyle {
+    let mut style = DEFAULT_TODO_STYLE;
+    let mut compact_known = false;
+    let mut heading_gap_known = false;
+    if apply_style_from_content(
+        current,
+        &mut style,
+        &mut compact_known,
+        &mut heading_gap_known,
+    ) && compact_known
+        && heading_gap_known
+    {
+        return style;
+    }
+    for offset in 1..=TODO_STYLE_LOOKBACK_DAYS {
+        let Some(prev) = date.checked_sub_days(chrono::Days::new(offset)) else {
+            break;
+        };
+        let Some(body) = note_body(vault, prev) else {
+            continue;
+        };
+        if apply_style_from_content(
+            &body,
+            &mut style,
+            &mut compact_known,
+            &mut heading_gap_known,
+        ) && compact_known
+            && heading_gap_known
+        {
             break;
         }
     }
+    style
+}
 
-    let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
-    match insert_at {
-        Some(at) => {
-            for (offset, item) in items.iter().enumerate() {
-                out.insert(at + offset, item.clone());
-            }
-            if needs_boundary_blank {
-                out.insert(at + items.len(), String::new());
-            }
-        }
-        None => {
-            if !out.is_empty() && !out.last().map(|s| s.is_empty()).unwrap_or(true) {
-                out.push(String::new());
-            }
-            out.extend(items.iter().cloned());
+fn note_body(vault: &Vault, date: NaiveDate) -> Option<String> {
+    let config = vault.daily_notes_config().ok()?;
+    let path = resolved_note_path(vault, &config, date).ok()?;
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(path).ok()
+}
+
+fn apply_style_from_content(
+    content: &str,
+    style: &mut TodoStyle,
+    compact_known: &mut bool,
+    heading_gap_known: &mut bool,
+) -> bool {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some((start, end)) = first_todo_region(&lines, 0, lines.len()) else {
+        return false;
+    };
+    if !*heading_gap_known {
+        style.blank_after_heading = start > 0 && lines[start - 1].trim().is_empty();
+        *heading_gap_known = true;
+    }
+    if !*compact_known && let Some(compact) = compact_between(&lines, start, end) {
+        style.compact = compact;
+        *compact_known = true;
+    }
+    *compact_known && *heading_gap_known
+}
+
+fn is_title_heading(line: &str) -> bool {
+    let t = line.trim_end();
+    t.starts_with("# ") && !t.starts_with("##")
+}
+
+fn skip_frontmatter(lines: &[&str]) -> usize {
+    if lines.first().is_none_or(|l| l.trim() != "---") {
+        return 0;
+    }
+    for (idx, line) in lines.iter().enumerate().skip(1) {
+        if line.trim() == "---" {
+            return idx + 1;
         }
     }
+    0
+}
+
+/// First checkbox run in `[from, to)`, including single blank lines between
+/// items. Stops at headings, paragraphs, or other non-todo content.
+fn first_todo_region(lines: &[&str], from: usize, to: usize) -> Option<(usize, usize)> {
+    let re = checkbox_re();
+    let start = (from..to).find(|&i| re.is_match(lines[i]))?;
+    let mut last = start;
+    let mut i = start + 1;
+    while i < to {
+        if re.is_match(lines[i]) {
+            last = i;
+            i += 1;
+            continue;
+        }
+        if lines[i].trim().is_empty() {
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    Some((start, last + 1))
+}
+
+/// `true` when at least one adjacent todo pair has no blank line between them.
+/// `None` when the range has fewer than two checkboxes.
+fn compact_between(lines: &[&str], start: usize, end: usize) -> Option<bool> {
+    let re = checkbox_re();
+    let mut prev: Option<usize> = None;
+    let mut dense = false;
+    let mut spaced = false;
+    let mut count = 0usize;
+    for i in start..end {
+        if !re.is_match(lines[i]) {
+            continue;
+        }
+        count += 1;
+        if let Some(p) = prev {
+            let gap = (p + 1..i).any(|j| lines[j].trim().is_empty());
+            if gap {
+                spaced = true;
+            } else {
+                dense = true;
+            }
+        }
+        prev = Some(i);
+    }
+    if count < 2 {
+        return None;
+    }
+    Some(dense || !spaced)
+}
+
+fn insert_items(out: &mut Vec<String>, at: usize, items: &[String], compact: bool) -> usize {
+    let mut pos = at;
+    if !compact && pos > 0 && !out[pos - 1].trim().is_empty() {
+        out.insert(pos, String::new());
+        pos += 1;
+    }
+    for (offset, item) in items.iter().enumerate() {
+        if !compact && offset > 0 {
+            out.insert(pos, String::new());
+            pos += 1;
+        }
+        out.insert(pos, item.clone());
+        pos += 1;
+    }
+    pos
+}
+
+fn ensure_blank_before_following(out: &mut Vec<String>, after: usize) {
+    if after < out.len() && !out[after].trim().is_empty() {
+        out.insert(after, String::new());
+    }
+}
+
+fn insert_todo_lines(content: &str, items: &[String], style: TodoStyle) -> String {
+    let heading = tasks_heading_re();
+    let any_heading = Regex::new(r"^(#{1,6})\s+.+?\s*$").expect("heading regex");
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
+
+    if let Some((sec_start, sec_end)) = tasks_section_bounds(&lines, &heading, &any_heading) {
+        let compact = first_todo_region(&lines, sec_start, sec_end)
+            .and_then(|(start, end)| compact_between(&lines, start, end))
+            .unwrap_or(style.compact);
+        let (at, needs_boundary_blank) = tasks_section_insert_at(&lines, sec_start, sec_end);
+        let after = insert_items(&mut out, at, items, compact);
+        if needs_boundary_blank {
+            ensure_blank_before_following(&mut out, after);
+        }
+        return finish_body(out);
+    }
+
+    if let Some((start, end)) = first_todo_region(&lines, 0, lines.len()) {
+        let compact = compact_between(&lines, start, end).unwrap_or(style.compact);
+        let after = insert_items(&mut out, end, items, compact);
+        ensure_blank_before_following(&mut out, after);
+        return finish_body(out);
+    }
+
+    let mut at = skip_frontmatter(&lines);
+    while at < lines.len() && lines[at].trim().is_empty() {
+        at += 1;
+    }
+    if at < lines.len() && is_title_heading(lines[at]) {
+        at += 1;
+    }
+    let after_title = at;
+    if style.blank_after_heading {
+        if after_title < lines.len() && lines[after_title].trim().is_empty() {
+            at = after_title + 1;
+        } else if after_title > 0 {
+            out.insert(after_title, String::new());
+            at = after_title + 1;
+        }
+    } else {
+        at = after_title;
+    }
+    let after = insert_items(&mut out, at, items, style.compact);
+    ensure_blank_before_following(&mut out, after);
+    finish_body(out)
+}
+
+fn tasks_section_bounds(
+    lines: &[&str],
+    heading: &Regex,
+    any_heading: &Regex,
+) -> Option<(usize, usize)> {
+    for (idx, line) in lines.iter().enumerate() {
+        if !heading.is_match(line) {
+            continue;
+        }
+        let level = line.chars().take_while(|ch| *ch == '#').count();
+        let section_start = idx + 1;
+        let mut section_end = section_start;
+        let mut in_fence = false;
+        while section_end < lines.len() {
+            let trimmed = lines[section_end].trim_start();
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                in_fence = !in_fence;
+            } else if !in_fence
+                && let Some(next) = any_heading.captures(lines[section_end])
+                && next[1].len() <= level
+            {
+                break;
+            }
+            section_end += 1;
+        }
+        return Some((section_start, section_end));
+    }
+    None
+}
+
+fn tasks_section_insert_at(
+    lines: &[&str],
+    section_start: usize,
+    section_end: usize,
+) -> (usize, bool) {
+    let mut at = section_end;
+    while at > section_start && lines[at - 1].trim().is_empty() {
+        at -= 1;
+    }
+    let mut needs_boundary_blank = false;
+    if at == section_start && section_start < section_end && lines[section_start].trim().is_empty()
+    {
+        at += 1;
+        if at == section_end {
+            needs_boundary_blank = true;
+        }
+    }
+    (at, needs_boundary_blank)
+}
+
+fn finish_body(out: Vec<String>) -> String {
     let mut body = out.join("\n");
     if !body.ends_with('\n') {
         body.push('\n');
@@ -1107,7 +1312,67 @@ mod tests {
         let (vault, date, note) = vault_with("# Day\n\nhello\n");
         add_todo(&vault, date, "solo").unwrap();
         let body = fs::read_to_string(&note).unwrap();
-        assert!(body.ends_with("- [ ] solo\n"));
+        assert_eq!(body, "# Day\n\n- [ ] solo\n\nhello\n");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn appends_to_first_todo_list_not_end_of_note() {
+        let (vault, date, note) =
+            vault_with("# Day\n\n- [ ] existing\n- [ ] also\n\n## Notes\n\nbody\n\n- [ ] stray\n");
+        add_todo(&vault, date, "new one").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n- [ ] existing\n- [ ] also\n- [ ] new one\n\n## Notes\n\nbody\n\n- [ ] stray\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn keeps_compact_todo_spacing() {
+        let (vault, date, note) = vault_with("# Day\n\n- [ ] existing\n\n## Notes\n");
+        add_todo(&vault, date, "new one").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(body, "# Day\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn infers_compact_spacing_from_recent_notes() {
+        let (vault, date, note) = vault_with("# Day\n\n## Notes\n");
+        let prev = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&prev, "# Prev\n\n- [ ] one\n- [ ] two\n\n## Notes\n").unwrap();
+        add_todo(&vault, date, "new one").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(body, "# Day\n\n- [ ] new one\n\n## Notes\n");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn infers_spaced_todos_from_recent_notes() {
+        let (vault, date, note) = vault_with("# Day\n");
+        let prev = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&prev, "# Prev\n\n- [ ] one\n\n- [ ] two\n").unwrap();
+        add_todo(&vault, date, "new one").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(body, "# Day\n\n- [ ] new one\n");
+        add_todo(&vault, date, "second").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(body, "# Day\n\n- [ ] new one\n\n- [ ] second\n");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn inserts_after_frontmatter_and_title() {
+        let (vault, date, note) =
+            vault_with("---\ntags: daily\n---\n\n# Day\n\n## Notes\n\nbody\n");
+        add_todo(&vault, date, "solo").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "---\ntags: daily\n---\n\n# Day\n\n- [ ] solo\n\n## Notes\n\nbody\n"
+        );
         let _ = fs::remove_dir_all(vault.root());
     }
 

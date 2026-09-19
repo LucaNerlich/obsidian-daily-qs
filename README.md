@@ -104,6 +104,8 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
 - **Panel**:
   - List todos; click or Enter/Space (with keyboard cursor) to toggle.
   - Nested todos render indented; Shift+Enter adds under the selected row.
+  - New items append to the first todo list (usually at the top). Spacing is
+    copied from that list, or from recent daily notes when starting a new one.
   - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation.
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
   - Search: `/`; open-only toggle; carry over; open in Obsidian. Opening a

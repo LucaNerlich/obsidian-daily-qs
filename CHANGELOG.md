@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- New todos append to the first checkbox list in the note (typically under
+  the date heading) instead of the end of the file, so later chapters stay
+  below the list.
+- Spacing between todos is copied from the current note, or from recent
+  daily notes when the list is still empty — compact lists stay compact.
+
 ## [1.8.1] - 2026-09-01
 
 ### Fixed
