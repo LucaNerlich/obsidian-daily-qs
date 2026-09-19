@@ -56,9 +56,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Match rust-toolchain.toml. `@stable` installs clippy/rustfmt on the
-      # `stable` toolchain name, but the pin overrides cargo to `1.97.1`, which
+      # `stable` toolchain name, but the pin overrides cargo to `1.98.1`, which
       # then fails `cargo fmt` with "cargo-fmt is not installed".
-      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.98.1
         with:
           components: clippy, rustfmt
 
@@ -85,7 +85,7 @@ jobs:
         run: node omarchy/model.test.mjs
 
   # No separate msrv job: rust-version in Cargo.toml is pinned to the same
-  # 1.97.1 toolchain used everywhere else (rust-toolchain.toml), so a
+  # 1.98.1 toolchain used everywhere else (rust-toolchain.toml), so a
   # dedicated "does it build on the declared minimum" job would just rebuild
   # under the exact same toolchain the `linux` job above already uses.
 
@@ -117,7 +117,7 @@ jobs:
 
       # Pin to the toolchain in rust-toolchain.toml so the check reproduces
       # the exact binary that was committed.
-      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.98.1
         with:
           targets: ${{ matrix.target }}
 
