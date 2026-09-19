@@ -315,6 +315,18 @@ BarWidget {
     root.runAction(args)
   }
 
+  function deferTodo(line, text, withChildren) {
+    var n = Number(line)
+    if (!isFinite(n) || n < 1) return
+    var d = root.viewDate || Model.todayIso()
+    var args = ["defer", "--date", d, "--line", String(Math.floor(n))]
+    if (typeof text === "string" && text !== "")
+      args.push("--expect-text", text)
+    if (withChildren === true)
+      args.push("--with-children")
+    root.runAction(args)
+  }
+
   function indentTodo(line, text, delta) {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return

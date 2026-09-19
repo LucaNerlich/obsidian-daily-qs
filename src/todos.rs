@@ -462,26 +462,49 @@ fn add_todo_lines(
     date: NaiveDate,
     items: &[(usize, String)],
 ) -> Result<(), VaultError> {
+    let formatted: Vec<(usize, bool, String)> = items
+        .iter()
+        .map(|(depth, text)| (*depth, false, text.clone()))
+        .collect();
+    add_checkbox_lines(vault, date, &formatted, true)
+}
+
+fn add_checkbox_lines(
+    vault: &Vault,
+    date: NaiveDate,
+    items: &[(usize, bool, String)],
+    rollover: bool,
+) -> Result<(), VaultError> {
     let config = vault.daily_notes_config()?;
+    let path = vault.daily_note_path(&config, date)?;
+    if rollover {
+        ensure_note(vault, &config, &path, date)?;
+    } else {
+        create_note_if_missing(vault, &config, &path, date)?;
+    }
     let path = resolved_note_path(vault, &config, date)?;
-    ensure_note(vault, &config, &path, date)?;
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     let mut prev_depth: Option<usize> = None;
     let lines: Vec<String> = items
         .iter()
-        .map(|(depth, text)| {
+        .map(|(depth, checked, text)| {
             let d = match prev_depth {
                 None => 0,
                 Some(p) => (*depth).min(p + 1),
             };
             prev_depth = Some(d);
-            format!("{}- [ ] {}", "  ".repeat(d), text)
+            let mark = if *checked { "x" } else { " " };
+            format!("{}- [{mark}] {text}", "  ".repeat(d))
         })
         .collect();
     let style = infer_todo_style(vault, date, &content);
     let next = insert_todo_lines(&content, &lines, style);
-    write_atomic_with_undo(vault, date, &path, &content, &next)
+    if rollover {
+        write_atomic_with_undo(vault, date, &path, &content, &next)
+    } else {
+        write_atomic(vault.root(), &path, &next)
+    }
 }
 
 fn expect_line_text(
@@ -621,6 +644,82 @@ pub fn delete_todo(
             drop.insert(t.line);
         }
     }
+    let kept: Vec<&str> = content
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| !drop.contains(&(i + 1)))
+        .map(|(_, line)| line)
+        .collect();
+    let mut next = kept.join("\n");
+    if content.ends_with('\n') && !next.is_empty() {
+        next.push('\n');
+    }
+    write_atomic_with_undo(vault, date, &path, &content, &next)?;
+    read_snapshot(vault, date)
+}
+
+/// Move a todo (and nested children) to the next calendar day.
+///
+/// Creates that note from the daily-note template when missing, without
+/// rolling over the rest of the source day's open todos.
+pub fn defer_todo(
+    vault: &Vault,
+    date: NaiveDate,
+    line: usize,
+    expect_text: Option<&str>,
+    with_children: bool,
+) -> Result<Snapshot, VaultError> {
+    if line == 0 {
+        return Err(VaultError::Io("line must be >= 1".into()));
+    }
+    let next_date = date
+        .checked_add_days(chrono::Days::new(1))
+        .ok_or_else(|| VaultError::Io("date overflow".into()))?;
+    let config = vault.daily_notes_config()?;
+    let path = resolved_note_path(vault, &config, date)?;
+    if !path.exists() {
+        return Err(VaultError::Io(format!(
+            "daily note does not exist: {}",
+            path.display()
+        )));
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    expect_line_text(&content, line, expect_text)?;
+    let todos = parse_todos(&content);
+    let target = todos
+        .iter()
+        .find(|t| t.line == line)
+        .ok_or_else(|| VaultError::Io(format!("line {line} is not a todo")))?;
+    let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    drop.insert(line);
+    if with_children {
+        let parent_depth = target.depth;
+        for t in todos.iter().skip_while(|t| t.line <= line) {
+            if t.depth <= parent_depth {
+                break;
+            }
+            drop.insert(t.line);
+        }
+    }
+    let mut moving: Vec<(usize, bool, String)> = todos
+        .into_iter()
+        .filter(|t| drop.contains(&t.line))
+        .map(|t| (t.depth, t.checked, t.text))
+        .collect();
+    if moving.is_empty() {
+        return Err(VaultError::Io(format!("line {line} is not a todo")));
+    }
+    let base_depth = moving[0].0;
+    for item in &mut moving {
+        item.0 = item.0.saturating_sub(base_depth);
+    }
+
+    // Create / append on the next day first so a crash still leaves the
+    // item somewhere. Skip carry-over: deferring one todo must not pull
+    // the rest of today's list along with it.
+    add_checkbox_lines(vault, next_date, &moving, false)?;
+
     let kept: Vec<&str> = content
         .lines()
         .enumerate()
@@ -1716,6 +1815,54 @@ mod tests {
             "- [x] done yesterday\n"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn defer_moves_todo_to_next_day() {
+        let (vault, date, note) = vault_with("- [ ] keep\n- [ ] later\n");
+        defer_todo(&vault, date, 2, Some("later"), false).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] keep\n");
+        let next = vault.root().join("Daily/2026-08-21.md");
+        let body = fs::read_to_string(&next).unwrap();
+        assert!(body.contains("- [ ] later"), "body: {body}");
+        assert!(!body.contains("- [ ] keep"), "body: {body}");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn defer_moves_children_and_preserves_checked() {
+        let (vault, date, note) =
+            vault_with("- [ ] parent\n  - [x] child\n    - [ ] grand\n- [ ] sibling\n");
+        defer_todo(&vault, date, 1, Some("parent"), true).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] sibling\n");
+        let body = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
+        assert!(
+            body.contains("- [ ] parent\n  - [x] child\n    - [ ] grand\n"),
+            "body: {body}"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn defer_creates_next_day_without_rolling_over_the_rest() {
+        let (vault, date, note) = vault_with("- [ ] stay\n- [ ] move me\n");
+        defer_todo(&vault, date, 2, Some("move me"), true).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] stay\n");
+        let next = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
+        assert!(next.contains("- [ ] move me"), "next: {next}");
+        assert!(!next.contains("- [ ] stay"), "next: {next}");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn defer_rebases_nested_item_to_top_level() {
+        let (vault, date, note) = vault_with("- [ ] parent\n  - [ ] child\n");
+        defer_todo(&vault, date, 2, Some("child"), true).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] parent\n");
+        let next = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
+        assert!(next.contains("- [ ] child"), "next: {next}");
+        assert!(!next.contains("  - [ ] child"), "next: {next}");
+        let _ = fs::remove_dir_all(vault.root());
     }
 
     #[cfg(unix)]

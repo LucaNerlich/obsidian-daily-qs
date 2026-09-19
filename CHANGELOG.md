@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Right-click a todo in the panel to delete it, or move it to tomorrow
+  (`Do tomorrow`). Nested children move with the parent. Tomorrow's note
+  is created from the daily-note template when missing, without rolling
+  over the rest of today's list.
+- CLI: `obsidian-daily-qs defer --line N` moves a todo to the next day.
+
 ### Changed
 
 - New todos append to the first checkbox list in the note (typically under
