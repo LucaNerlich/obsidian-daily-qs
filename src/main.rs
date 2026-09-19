@@ -61,6 +61,10 @@ enum Command {
         /// Nest under this 1-based todo line
         #[arg(long)]
         under_line: Option<usize>,
+        /// Insert under this markdown heading (e.g. Inbox); falls back to
+        /// the default Tasks/Todos placement when missing
+        #[arg(long)]
+        heading: Option<String>,
     },
     /// Toggle a checkbox on the given 1-based source line
     Toggle {
@@ -103,6 +107,9 @@ enum Command {
         with_children: bool,
         #[arg(long)]
         date: Option<String>,
+        /// Insert under this markdown heading in the destination note
+        #[arg(long)]
+        heading: Option<String>,
     },
     /// Indent a todo one level
     Indent {
@@ -133,6 +140,9 @@ enum Command {
     CarryOver {
         #[arg(long)]
         date: Option<String>,
+        /// Insert carried todos under this markdown heading
+        #[arg(long)]
+        heading: Option<String>,
     },
     /// Create the daily note when missing, then open it in Obsidian
     Open {
@@ -159,10 +169,11 @@ fn main() {
             text,
             date,
             under_line,
+            heading,
         } => emit(run(
             vault_arg,
             archive_arg,
-            |vault, d| add_todo_under(vault, d, &text, under_line),
+            |vault, d| add_todo_under(vault, d, &text, under_line, heading.as_deref()),
             date,
         )),
         Command::Toggle {
@@ -202,10 +213,20 @@ fn main() {
             expect_text,
             with_children,
             date,
+            heading,
         } => emit(run(
             vault_arg,
             archive_arg,
-            |vault, d| defer_todo(vault, d, line, expect_text.as_deref(), with_children),
+            |vault, d| {
+                defer_todo(
+                    vault,
+                    d,
+                    line,
+                    expect_text.as_deref(),
+                    with_children,
+                    heading.as_deref(),
+                )
+            },
             date,
         )),
         Command::Indent {
@@ -248,7 +269,12 @@ fn main() {
             };
             emit_json(&out);
         }
-        Command::CarryOver { date } => emit(run(vault_arg, archive_arg, carry_over, date)),
+        Command::CarryOver { date, heading } => emit(run(
+            vault_arg,
+            archive_arg,
+            |vault, d| carry_over(vault, d, heading.as_deref()),
+            date,
+        )),
         Command::Open { date } => emit(run(vault_arg, archive_arg, open_in_obsidian, date)),
     }
 }

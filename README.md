@@ -104,8 +104,11 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
 - **Panel**:
   - List todos; click or Enter/Space (with keyboard cursor) to toggle.
   - Nested todos render indented; Shift+Enter adds under the selected row.
-  - New items append to the first todo list (usually at the top). Spacing is
-    copied from that list, or from recent daily notes when starting a new one.
+  - New items go under the configured `insertHeading` (or `todoHeading` when
+    `insertHeading` is empty). When both are empty, the built-in `Tasks`/`Todos`
+    section is used, falling back to the first todo list (usually at the top).
+    Spacing is copied from that list, or from recent daily notes when starting
+    a new one.
   - Right-click a row to delete it or move it to tomorrow (children included).
   - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation
     (undoing a defer restores both days; a tomorrow note created by the
@@ -113,12 +116,19 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
   - Search: `/`; open-only toggle; carry over; open in Obsidian. Opening a
     missing day creates its note from the configured daily-note template.
-- **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `archiveFolder`, `openOnly`, `todoHeading`, `hideWhenDone`, `hideWhenEmpty`.
+- **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `archiveFolder`, `openOnly`, `todoHeading`, `insertHeading`, `hideWhenDone`, `hideWhenEmpty`.
 
 ```bash
 omarchy bar set luca.obsidian-daily openOnly true
 omarchy bar set luca.obsidian-daily todoHeading Todos
+omarchy bar set luca.obsidian-daily insertHeading Inbox
 ```
+
+`todoHeading` filters which todos the bar and panel show. `insertHeading`
+names the markdown heading new todos are added under (e.g. `Inbox`); when
+empty it follows `todoHeading`, and when both are empty new todos use the
+built-in `Tasks`/`Todos` placement. Missing headings fall back silently, so
+existing notes keep their behavior.
 
 ## CLI
 
@@ -129,16 +139,19 @@ obsidian-daily-qs status
 obsidian-daily-qs status --date 2026-08-19 --heading Todos
 obsidian-daily-qs watch
 obsidian-daily-qs add --text "Ship plugin"
+obsidian-daily-qs add --text "Inbox item" --heading Inbox
 obsidian-daily-qs add --text "Nested" --under-line 12
 obsidian-daily-qs toggle --line 12
 obsidian-daily-qs edit --line 12 --text "Renamed" --expect-text "Old"
 obsidian-daily-qs delete --line 12
 obsidian-daily-qs defer --line 12
+obsidian-daily-qs defer --line 12 --heading Inbox
 obsidian-daily-qs indent --line 12
 obsidian-daily-qs outdent --line 12
 obsidian-daily-qs undo
 obsidian-daily-qs week
 obsidian-daily-qs carry-over
+obsidian-daily-qs carry-over --heading Inbox
 obsidian-daily-qs open
 ```
 

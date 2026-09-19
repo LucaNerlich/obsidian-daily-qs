@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Configurable insert heading: a new `insertHeading` bar setting names the
+  markdown heading new todos are added under (e.g. `Inbox`). When empty it
+  follows `todoHeading`; when both are empty the built-in `Tasks`/`Todos`
+  placement applies. `add`, `carry-over`, and `defer` accept `--heading` for
+  the same per-command override. A missing heading falls back silently, and
+  an explicit `--under-line` parent still wins over the section.
 - Right-click a todo in the panel to delete it, or move it to tomorrow
   (`Do tomorrow`). Nested children move with the parent. Tomorrow's note
   is created from the daily-note template when missing, without rolling
