@@ -209,14 +209,38 @@ fn enrich_snapshot(
     snap.obsidian_uri = Some(open::open_uri(path));
     let today = chrono::Local::now().date_naive();
     snap.is_today = Some(date == today);
-    let prev = date.checked_sub_days(chrono::Days::new(1)).unwrap_or(date);
-    snap.carry_over_count = Some(open_todo_count(vault, prev)?);
+    snap.carry_over_count = Some(carry_source_count(vault, date)?.unwrap_or(0));
     if let Some(name) = config.template.clone() {
         snap.template_name = Some(name);
         let has_template = vault.template_path(config).is_some_and(|p| p.exists());
         snap.created_from_template = Some(has_template && path.exists());
     }
     Ok(())
+}
+
+/// How far back carry-over looks for the most recent previous daily note with
+/// open todos. Covers weekend/vacation gaps without scanning forever; each
+/// candidate is one small file read.
+const CARRY_OVER_LOOKBACK_DAYS: u64 = 30;
+
+/// Open count of the most recent previous day before `date` that still holds
+/// open todos (the "last found" daily note), or `None` when no such note
+/// exists in the lookback window.
+fn carry_source(vault: &Vault, date: NaiveDate) -> Result<Option<(NaiveDate, usize)>, VaultError> {
+    for offset in 1..=CARRY_OVER_LOOKBACK_DAYS {
+        let Some(prev) = date.checked_sub_days(chrono::Days::new(offset)) else {
+            break;
+        };
+        let count = open_todo_count(vault, prev)?;
+        if count > 0 {
+            return Ok(Some((prev, count)));
+        }
+    }
+    Ok(None)
+}
+
+fn carry_source_count(vault: &Vault, date: NaiveDate) -> Result<Option<usize>, VaultError> {
+    Ok(carry_source(vault, date)?.map(|(_, count)| count))
 }
 
 fn open_todo_count(vault: &Vault, date: NaiveDate) -> Result<usize, VaultError> {
@@ -253,12 +277,14 @@ fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, Vaul
         .collect())
 }
 
-/// Move yesterday's still-open todos into `date` (usually today), preserving
-/// their nesting, and remove them from the previous note so it is left with
-/// only its done todos. Todos whose parent was not carried are re-parented
-/// under the nearest carried ancestor (depth is clamped to previous depth + 1).
+/// Move still-open todos from the most recent previous daily note with open
+/// todos ("last found", up to `CARRY_OVER_LOOKBACK_DAYS` back) into `date`
+/// (usually today), preserving their nesting, and remove them from the source
+/// note so it is left with only its done todos. Todos whose parent was not
+/// carried are re-parented under the nearest carried ancestor (depth is
+/// clamped to previous depth + 1).
 /// Open todos that already exist in `date` are not duplicated and also stay
-/// in the previous note. Returns the number of moved todos.
+/// in the source note. Returns the number of moved todos.
 ///
 /// When `heading` names a markdown section (e.g. `Inbox`), carried items are
 /// inserted there; otherwise the default placement (Tasks/Todos, first list,
@@ -268,17 +294,17 @@ fn move_open_from_previous(
     date: NaiveDate,
     heading: Option<&str>,
 ) -> Result<usize, VaultError> {
-    let prev = date
-        .checked_sub_days(chrono::Days::new(1))
-        .ok_or_else(|| VaultError::Io("date underflow".into()))?;
     // Create the target note up front without rolling over: otherwise
     // add_todo_lines's ensure_note would create it here and re-enter this
     // function. That nested run finished completely (appending the items and
-    // emptying the previous note) before the outer add_todo_lines appended
+    // emptying the source note) before the outer add_todo_lines appended
     // the same lines again — duplicating every carried todo.
     let config = vault.daily_notes_config()?;
     let path = resolved_note_path(vault, &config, date)?;
     create_note_if_missing(vault, &config, &path, date)?;
+    let Some((prev, _)) = carry_source(vault, date)? else {
+        return Ok(0);
+    };
     let items = open_todo_items(vault, prev)?;
     if items.is_empty() {
         return Ok(0);
@@ -351,9 +377,10 @@ fn remove_todos(
     write_atomic(vault.root(), &path, &next)
 }
 
-/// Roll yesterday's open todos into `date` (usually today): they are moved,
-/// so the previous note keeps only its done todos. When `heading` is set,
-/// carried items are inserted under that markdown heading.
+/// Roll the most recent previous daily note's open todos into `date`
+/// (usually today): they are moved, so the source note keeps only its done
+/// todos. When `heading` is set, carried items are inserted under that
+/// markdown heading.
 pub fn carry_over(
     vault: &Vault,
     date: NaiveDate,
@@ -405,8 +432,9 @@ fn create_note_if_missing(
 
 /// Create today's note (and parents) if missing. Returns true when created.
 ///
-/// When the note is created, yesterday's open todos are rolled over into it
-/// under `heading` (same placement as `add`/`carry-over`).
+/// When the note is created, the most recent previous daily note's open todos
+/// are rolled over into it under `heading` (same placement as
+/// `add`/`carry-over`).
 pub fn ensure_note(
     vault: &Vault,
     config: &DailyNotesConfig,
@@ -415,9 +443,9 @@ pub fn ensure_note(
     heading: Option<&str>,
 ) -> Result<bool, VaultError> {
     let created = create_note_if_missing(vault, config, path, date)?;
-    // First access of a new day: pull yesterday's open todos into the fresh
-    // note and leave the previous one with only its done todos. Plain note
-    // creation carries no rollover, so this cannot re-enter itself.
+    // First access of a new day: pull the most recent previous open todos
+    // into the fresh note and leave the source with only its done todos.
+    // Plain note creation carries no rollover, so this cannot re-enter itself.
     if created {
         move_open_from_previous(vault, date, heading)?;
     }
@@ -2554,6 +2582,88 @@ mod tests {
             .join(prev.format("%Y-%m-%d").to_string())
             .with_extension("md");
         assert_eq!(fs::read_to_string(&prev_path).unwrap(), "- [x] finished\n");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_skips_missing_yesterday_to_last_found() {
+        // Yesterday missing, day before has open todos: the button count and
+        // the move must use the last found note.
+        let (vault, today, _) = vault_with("- [ ] today-only\n");
+        fs::write(
+            vault.root().join("Daily/2026-08-18.md"),
+            "- [ ] from-two-days-ago\n- [x] done\n",
+        )
+        .unwrap();
+        assert!(!vault.root().join("Daily/2026-08-19.md").exists());
+        let snap = read_snapshot(&vault, today).unwrap();
+        assert_eq!(snap.carry_over_count, Some(1));
+        let snap = carry_over(&vault, today, None).unwrap();
+        let texts: Vec<_> = snap.todos.unwrap().into_iter().map(|t| t.text).collect();
+        assert!(texts.contains(&"from-two-days-ago".to_string()));
+        assert_eq!(
+            fs::read_to_string(vault.root().join("Daily/2026-08-18.md")).unwrap(),
+            "- [x] done\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_skips_done_yesterday_to_last_found() {
+        // Yesterday exists but holds only done todos: look further back.
+        let (vault, today, _) = vault_with("- [ ] today-only\n");
+        fs::write(
+            vault.root().join("Daily/2026-08-19.md"),
+            "- [x] finished yesterday\n",
+        )
+        .unwrap();
+        fs::write(
+            vault.root().join("Daily/2026-08-18.md"),
+            "- [ ] older leftover\n",
+        )
+        .unwrap();
+        let snap = read_snapshot(&vault, today).unwrap();
+        assert_eq!(snap.carry_over_count, Some(1));
+        carry_over(&vault, today, None).unwrap();
+        assert!(
+            fs::read_to_string(vault.root().join("Daily/2026-08-20.md"))
+                .unwrap()
+                .contains("older leftover")
+        );
+        // Yesterday untouched, older note keeps only done (none left).
+        assert_eq!(
+            fs::read_to_string(vault.root().join("Daily/2026-08-19.md")).unwrap(),
+            "- [x] finished yesterday\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_prefers_nearest_day_with_open_todos() {
+        // Both yesterday and the day before have open todos: carry the
+        // nearest first; a second run drains the older backlog.
+        let (vault, today, _) = vault_with("");
+        fs::write(vault.root().join("Daily/2026-08-19.md"), "- [ ] near\n").unwrap();
+        fs::write(vault.root().join("Daily/2026-08-18.md"), "- [ ] far\n").unwrap();
+        let snap = read_snapshot(&vault, today).unwrap();
+        assert_eq!(snap.carry_over_count, Some(1));
+        carry_over(&vault, today, None).unwrap();
+        let body = fs::read_to_string(vault.root().join("Daily/2026-08-20.md")).unwrap();
+        assert!(body.contains("- [ ] near"), "body: {body}");
+        assert!(!body.contains("- [ ] far"), "body: {body}");
+        carry_over(&vault, today, None).unwrap();
+        let body = fs::read_to_string(vault.root().join("Daily/2026-08-20.md")).unwrap();
+        assert!(body.contains("- [ ] far"), "body: {body}");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_with_no_previous_open_is_noop() {
+        let (vault, today, _) = vault_with("- [ ] today-only\n");
+        let snap = read_snapshot(&vault, today).unwrap();
+        assert_eq!(snap.carry_over_count, Some(0));
+        let snap = carry_over(&vault, today, None).unwrap();
+        assert_eq!(snap.carry_over_count, Some(0));
         let _ = fs::remove_dir_all(vault.root());
     }
 }

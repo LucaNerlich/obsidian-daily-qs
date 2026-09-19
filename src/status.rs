@@ -43,7 +43,8 @@ pub struct Snapshot {
     /// Absolute `obsidian://open?path=…` URI for the daily note path.
     #[serde(rename = "obsidianUri", skip_serializing_if = "Option::is_none")]
     pub obsidian_uri: Option<String>,
-    /// Open todos on the previous calendar day (for carry-over UI).
+    /// Open todos on the most recent previous daily note with open items
+    /// (for carry-over UI).
     #[serde(rename = "carryOverCount", skip_serializing_if = "Option::is_none")]
     pub carry_over_count: Option<usize>,
     #[serde(rename = "isToday", skip_serializing_if = "Option::is_none")]

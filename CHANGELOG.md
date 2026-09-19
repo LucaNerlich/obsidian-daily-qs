@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Carry over now uses the most recent previous daily note with open todos
+  (last found, up to 30 days back) instead of yesterday only, so weekend or
+  vacation gaps no longer hide the button. Nearest day first; repeat to drain
+  older backlog. First write of a new day rolls the same source over.
+
 ## [1.9.0] - 2026-09-19
 
 ### Added

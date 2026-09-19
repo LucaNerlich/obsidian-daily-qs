@@ -136,7 +136,7 @@ enum Command {
         #[arg(long)]
         date: Option<String>,
     },
-    /// Move yesterday's still-open todos into the target day
+    /// Move the most recent previous daily note's still-open todos into the target day
     CarryOver {
         #[arg(long)]
         date: Option<String>,

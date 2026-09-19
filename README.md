@@ -114,7 +114,10 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
     (undoing a defer restores both days; a tomorrow note created by the
     defer is deleted again).
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
-  - Search: `/`; open-only toggle; carry over; open in Obsidian. Opening a
+  - Search: `/`; open-only toggle; carry over; open in Obsidian. Carry over
+    shows on today when a previous daily note still holds open todos — it
+    uses the most recent such note within the last 30 days (weekend/vacation
+    gaps), nearest first; repeat to drain older backlog. Opening a
     missing day creates its note from the configured daily-note template.
 - **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `archiveFolder`, `openOnly`, `todoHeading`, `insertHeading`, `hideWhenDone`, `hideWhenEmpty`.
 
