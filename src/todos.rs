@@ -20,6 +20,49 @@ fn tasks_heading_re() -> Regex {
     Regex::new(r"(?i)^#{1,6}\s+(tasks|todos)\s*$").expect("tasks heading regex")
 }
 
+#[derive(Default)]
+struct FenceScanner {
+    open: Option<(u8, usize)>,
+}
+
+impl FenceScanner {
+    /// Returns `true` for an opening/closing fence or a line inside one.
+    fn is_fenced(&mut self, line: &str) -> bool {
+        let bytes = line.as_bytes();
+        let indent = bytes.iter().take_while(|&&byte| byte == b' ').count();
+        if indent > 3 {
+            return self.open.is_some();
+        }
+
+        let Some(&marker) = bytes.get(indent) else {
+            return self.open.is_some();
+        };
+        if marker != b'`' && marker != b'~' {
+            return self.open.is_some();
+        }
+        let length = bytes[indent..]
+            .iter()
+            .take_while(|&&byte| byte == marker)
+            .count();
+
+        if let Some((open_marker, open_length)) = self.open {
+            if marker == open_marker
+                && length >= open_length
+                && bytes[indent + length..].iter().all(u8::is_ascii_whitespace)
+            {
+                self.open = None;
+            }
+            return true;
+        }
+
+        if length < 3 || (marker == b'`' && bytes[indent + length..].contains(&b'`')) {
+            return false;
+        }
+        self.open = Some((marker, length));
+        true
+    }
+}
+
 /// Count indentation levels of a checkbox prefix: every tab is one level,
 /// every two spaces one level (matches Obsidian's list indentation).
 fn indent_level(indent: &str) -> usize {
@@ -1118,7 +1161,8 @@ fn insert_todo_lines(
     heading: Option<&str>,
 ) -> String {
     let default_heading = tasks_heading_re();
-    let any_heading = Regex::new(r"^(#{1,6})\s+(.+?)\s*$").expect("heading regex");
+    let any_heading =
+        Regex::new(r"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$").expect("heading regex");
     let lines: Vec<&str> = content.lines().collect();
     let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
 
@@ -1187,7 +1231,11 @@ fn tasks_section_bounds(
     heading: &Regex,
     any_heading: &Regex,
 ) -> Option<(usize, usize)> {
+    let mut fences = FenceScanner::default();
     for (idx, line) in lines.iter().enumerate() {
+        if fences.is_fenced(line) {
+            continue;
+        }
         if !heading.is_match(line) {
             continue;
         }
@@ -1209,14 +1257,9 @@ fn custom_section_bounds(
     if want_l.is_empty() {
         return None;
     }
-    let mut in_fence = false;
+    let mut fences = FenceScanner::default();
     for (idx, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
+        if fences.is_fenced(line) {
             continue;
         }
         let Some(caps) = any_heading.captures(line) else {
@@ -1233,15 +1276,12 @@ fn custom_section_bounds(
 /// same-or-higher heading, ignoring heading-like lines inside fenced code
 /// blocks.
 fn section_range_from(lines: &[&str], idx: usize, any_heading: &Regex) -> Option<(usize, usize)> {
-    let level = lines[idx].chars().take_while(|ch| *ch == '#').count();
+    let level = any_heading.captures(lines[idx])?[1].len();
     let section_start = idx + 1;
     let mut section_end = section_start;
-    let mut in_fence = false;
+    let mut fences = FenceScanner::default();
     while section_end < lines.len() {
-        let trimmed = lines[section_end].trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-        } else if !in_fence
+        if !fences.is_fenced(lines[section_end])
             && let Some(next) = any_heading.captures(lines[section_end])
             && next[1].len() <= level
         {
@@ -1581,6 +1621,34 @@ mod tests {
     }
 
     #[test]
+    fn fenced_section_ignores_shorter_and_mismatched_closers() {
+        let (vault, date, note) = vault_with(
+            "# Day\n\n## Todos\n\n- [ ] first\n\n````md\n```\n## fake\n~~~~\n```` still fenced\n## also fake\n`````   \n- [ ] second\n\n## Notes\n",
+        );
+        add_todo(&vault, date, "last", None).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] first\n\n````md\n```\n## fake\n~~~~\n```` still fenced\n## also fake\n`````   \n- [ ] second\n- [ ] last\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn ignores_tasks_heading_inside_fenced_code_block() {
+        let (vault, date, note) = vault_with(
+            "# Day\n\n````md\n## Tasks\n```\n~~~~\n````\n\n## Tasks\n\n- [ ] existing\n\n## Notes\n",
+        );
+        add_todo(&vault, date, "new one", None).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n````md\n## Tasks\n```\n~~~~\n````\n\n## Tasks\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
     fn preserves_blank_line_boundary_in_empty_section() {
         let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n## Notes\n");
         add_todo(&vault, date, "new one", None).unwrap();
@@ -1628,6 +1696,19 @@ mod tests {
         assert_eq!(
             body,
             "# Day\n\n## inbox\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn custom_heading_matches_indented_atx_heading_with_closing_hashes() {
+        let (vault, date, note) =
+            vault_with("# Day\n\n   ## Inbox ##\n\n- [ ] existing\n\n  ## Notes ##\n\nbody\n");
+        add_todo(&vault, date, "new one", Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n   ## Inbox ##\n\n- [ ] existing\n- [ ] new one\n\n  ## Notes ##\n\nbody\n"
         );
         let _ = fs::remove_dir_all(vault.root());
     }

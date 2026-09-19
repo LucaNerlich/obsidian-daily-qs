@@ -105,9 +105,10 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
   - List todos; click or Enter/Space (with keyboard cursor) to toggle.
   - Nested todos render indented; Shift+Enter adds under the selected row.
   - New items go under the configured `insertHeading` (or `todoHeading` when
-    `insertHeading` is empty), falling back to the first todo list
-    (usually at the top). Spacing is copied from that list, or from recent
-    daily notes when starting a new one.
+    `insertHeading` is empty). When both are empty, the built-in `Tasks`/`Todos`
+    section is used, falling back to the first todo list (usually at the top).
+    Spacing is copied from that list, or from recent daily notes when starting
+    a new one.
   - Right-click a row to delete it or move it to tomorrow (children included).
   - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation
     (undoing a defer restores both days; a tomorrow note created by the
