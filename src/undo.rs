@@ -378,8 +378,16 @@ mod tests {
         .unwrap();
         fs::write(root.join("Daily/2026-08-21.md"), "# 2026-08-21\n").unwrap();
 
-        crate::todos::defer_todo_to(&vault, date, 2, Some("later"), false, Some(&undo_file))
-            .unwrap();
+        crate::todos::defer_todo_to(
+            &vault,
+            date,
+            2,
+            Some("later"),
+            false,
+            None,
+            Some(&undo_file),
+        )
+        .unwrap();
         assert_eq!(
             fs::read_to_string(root.join("Daily/2026-08-20.md")).unwrap(),
             "- [ ] keep\n"
@@ -417,8 +425,16 @@ mod tests {
         .unwrap();
         assert!(!root.join("Daily/2026-08-21.md").exists());
 
-        crate::todos::defer_todo_to(&vault, date, 2, Some("later"), false, Some(&undo_file))
-            .unwrap();
+        crate::todos::defer_todo_to(
+            &vault,
+            date,
+            2,
+            Some("later"),
+            false,
+            None,
+            Some(&undo_file),
+        )
+        .unwrap();
         assert!(root.join("Daily/2026-08-21.md").exists());
 
         undo_last_from(&vault, &undo_file).unwrap();

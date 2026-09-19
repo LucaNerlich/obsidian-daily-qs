@@ -216,7 +216,15 @@ fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, Vaul
 /// under the nearest carried ancestor (depth is clamped to previous depth + 1).
 /// Open todos that already exist in `date` are not duplicated and also stay
 /// in the previous note. Returns the number of moved todos.
-fn move_open_from_previous(vault: &Vault, date: NaiveDate) -> Result<usize, VaultError> {
+///
+/// When `heading` names a markdown section (e.g. `Inbox`), carried items are
+/// inserted there; otherwise the default placement (Tasks/Todos, first list,
+/// after title) applies.
+fn move_open_from_previous(
+    vault: &Vault,
+    date: NaiveDate,
+    heading: Option<&str>,
+) -> Result<usize, VaultError> {
     let prev = date
         .checked_sub_days(chrono::Days::new(1))
         .ok_or_else(|| VaultError::Io("date underflow".into()))?;
@@ -247,7 +255,7 @@ fn move_open_from_previous(vault: &Vault, date: NaiveDate) -> Result<usize, Vaul
         .map(|item| (item.depth, item.text))
         .collect();
     if !to_move.is_empty() {
-        add_todo_lines(vault, date, &to_move)?;
+        add_todo_lines(vault, date, &to_move, heading)?;
     }
     // Reconcile against the target's current open todos instead of only the
     // lines added above: if an earlier run added to the target but failed
@@ -301,9 +309,14 @@ fn remove_todos(
 }
 
 /// Roll yesterday's open todos into `date` (usually today): they are moved,
-/// so the previous note keeps only its done todos.
-pub fn carry_over(vault: &Vault, date: NaiveDate) -> Result<Snapshot, VaultError> {
-    move_open_from_previous(vault, date)?;
+/// so the previous note keeps only its done todos. When `heading` is set,
+/// carried items are inserted under that markdown heading.
+pub fn carry_over(
+    vault: &Vault,
+    date: NaiveDate,
+    heading: Option<&str>,
+) -> Result<Snapshot, VaultError> {
+    move_open_from_previous(vault, date, heading)?;
     read_snapshot(vault, date)
 }
 
@@ -348,18 +361,22 @@ fn create_note_if_missing(
 }
 
 /// Create today's note (and parents) if missing. Returns true when created.
+///
+/// When the note is created, yesterday's open todos are rolled over into it
+/// under `heading` (same placement as `add`/`carry-over`).
 pub fn ensure_note(
     vault: &Vault,
     config: &DailyNotesConfig,
     path: &Path,
     date: NaiveDate,
+    heading: Option<&str>,
 ) -> Result<bool, VaultError> {
     let created = create_note_if_missing(vault, config, path, date)?;
     // First access of a new day: pull yesterday's open todos into the fresh
     // note and leave the previous one with only its done todos. Plain note
     // creation carries no rollover, so this cannot re-enter itself.
     if created {
-        move_open_from_previous(vault, date)?;
+        move_open_from_previous(vault, date, heading)?;
     }
     Ok(created)
 }
@@ -381,9 +398,16 @@ fn expand_template(raw: &str, date: NaiveDate) -> String {
 }
 
 /// Append a new open todo. When `under_line` is set, nest one level under
-/// that todo and insert immediately after it.
-pub fn add_todo(vault: &Vault, date: NaiveDate, text: &str) -> Result<Snapshot, VaultError> {
-    add_todo_under(vault, date, text, None)
+/// that todo and insert immediately after it (the `heading` is ignored in
+/// that case). Otherwise the todo is inserted under `heading` when it names
+/// an existing markdown section, falling back to the default placement.
+pub fn add_todo(
+    vault: &Vault,
+    date: NaiveDate,
+    text: &str,
+    heading: Option<&str>,
+) -> Result<Snapshot, VaultError> {
+    add_todo_under(vault, date, text, None, heading)
 }
 
 pub fn add_todo_under(
@@ -391,6 +415,7 @@ pub fn add_todo_under(
     date: NaiveDate,
     text: &str,
     under_line: Option<usize>,
+    heading: Option<&str>,
 ) -> Result<Snapshot, VaultError> {
     let text = text.trim();
     if text.is_empty() {
@@ -401,7 +426,7 @@ pub fn add_todo_under(
     }
     match under_line {
         None => {
-            add_todo_lines(vault, date, &[(0, text.to_string())])?;
+            add_todo_lines(vault, date, &[(0, text.to_string())], heading)?;
         }
         Some(parent_line) => {
             if parent_line == 0 {
@@ -409,7 +434,7 @@ pub fn add_todo_under(
             }
             let config = vault.daily_notes_config()?;
             let path = resolved_note_path(vault, &config, date)?;
-            ensure_note(vault, &config, &path, date)?;
+            ensure_note(vault, &config, &path, date, heading)?;
             let content = fs::read_to_string(&path)
                 .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
             let todos = parse_todos(&content);
@@ -456,17 +481,19 @@ const TODO_STYLE_LOOKBACK_DAYS: u64 = 14;
 
 /// Append the given `(depth, text)` todos as indented `- [ ] …` lines.
 /// Depths are clamped so each line nests at most one level deeper than the
-/// previous inserted line.
+/// previous inserted line. When `heading` names an existing markdown section,
+/// items are inserted there; otherwise the default placement applies.
 fn add_todo_lines(
     vault: &Vault,
     date: NaiveDate,
     items: &[(usize, String)],
+    heading: Option<&str>,
 ) -> Result<(), VaultError> {
     let formatted: Vec<(usize, bool, String)> = items
         .iter()
         .map(|(depth, text)| (*depth, false, text.clone()))
         .collect();
-    add_checkbox_lines(vault, date, &formatted, true)
+    add_checkbox_lines(vault, date, &formatted, true, heading)
 }
 
 fn format_checkbox_lines(items: &[(usize, bool, String)]) -> Vec<String> {
@@ -490,13 +517,14 @@ fn add_checkbox_lines(
     date: NaiveDate,
     items: &[(usize, bool, String)],
     rollover: bool,
+    heading: Option<&str>,
 ) -> Result<(), VaultError> {
     let config = vault.daily_notes_config()?;
     // Resolve first so archived notes are edited in place instead of
     // spawning a live duplicate when the live path is missing.
     let path = resolved_note_path(vault, &config, date)?;
     if rollover {
-        ensure_note(vault, &config, &path, date)?;
+        ensure_note(vault, &config, &path, date, heading)?;
     } else {
         create_note_if_missing(vault, &config, &path, date)?;
     }
@@ -504,7 +532,7 @@ fn add_checkbox_lines(
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     let lines = format_checkbox_lines(items);
     let style = infer_todo_style(vault, date, &content);
-    let next = insert_todo_lines(&content, &lines, style);
+    let next = insert_todo_lines(&content, &lines, style, heading);
     if rollover {
         write_atomic_with_undo(vault, date, &path, &content, &next)
     } else {
@@ -670,14 +698,18 @@ pub fn delete_todo(
 /// restores both notes (a tomorrow note created by the defer is deleted
 /// again); if the source write fails after the destination append, the
 /// destination is rolled back so the item is never duplicated.
+///
+/// When `heading` names a markdown section in the destination note, the item
+/// is inserted there; otherwise the default placement applies.
 pub fn defer_todo(
     vault: &Vault,
     date: NaiveDate,
     line: usize,
     expect_text: Option<&str>,
     with_children: bool,
+    heading: Option<&str>,
 ) -> Result<Snapshot, VaultError> {
-    defer_todo_to(vault, date, line, expect_text, with_children, None)
+    defer_todo_to(vault, date, line, expect_text, with_children, heading, None)
 }
 
 /// Same as [`defer_todo`] but records undo to an explicit file when given.
@@ -689,6 +721,7 @@ pub fn defer_todo_to(
     line: usize,
     expect_text: Option<&str>,
     with_children: bool,
+    heading: Option<&str>,
     undo_dest: Option<&Path>,
 ) -> Result<Snapshot, VaultError> {
     if line == 0 {
@@ -780,6 +813,7 @@ pub fn defer_todo_to(
         &dest_content,
         &format_checkbox_lines(&moving),
         infer_todo_style(vault, next_date, &dest_content),
+        heading,
     );
     if let Err(e) = write_atomic(vault.root(), &dest_path, &dest_next) {
         if !dest_existed {
@@ -1077,13 +1111,36 @@ fn ensure_blank_before_following(out: &mut Vec<String>, after: usize) {
     }
 }
 
-fn insert_todo_lines(content: &str, items: &[String], style: TodoStyle) -> String {
-    let heading = tasks_heading_re();
-    let any_heading = Regex::new(r"^(#{1,6})\s+.+?\s*$").expect("heading regex");
+fn insert_todo_lines(
+    content: &str,
+    items: &[String],
+    style: TodoStyle,
+    heading: Option<&str>,
+) -> String {
+    let default_heading = tasks_heading_re();
+    let any_heading = Regex::new(r"^(#{1,6})\s+(.+?)\s*$").expect("heading regex");
     let lines: Vec<&str> = content.lines().collect();
     let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
 
-    if let Some((sec_start, sec_end)) = tasks_section_bounds(&lines, &heading, &any_heading) {
+    // A configured heading wins when it names an existing section. A blank
+    // or missing heading falls through to the default placement below, so
+    // existing notes keep their behavior.
+    if let Some(want) = heading.map(str::trim).filter(|s| !s.is_empty())
+        && let Some((sec_start, sec_end)) = custom_section_bounds(&lines, want, &any_heading)
+    {
+        let compact = first_todo_region(&lines, sec_start, sec_end)
+            .and_then(|(start, end)| compact_between(&lines, start, end))
+            .unwrap_or(style.compact);
+        let (at, needs_boundary_blank) = tasks_section_insert_at(&lines, sec_start, sec_end);
+        let after = insert_items(&mut out, at, items, compact);
+        if needs_boundary_blank {
+            ensure_blank_before_following(&mut out, after);
+        }
+        return finish_body(out);
+    }
+
+    if let Some((sec_start, sec_end)) = tasks_section_bounds(&lines, &default_heading, &any_heading)
+    {
         let compact = first_todo_region(&lines, sec_start, sec_end)
             .and_then(|(start, end)| compact_between(&lines, start, end))
             .unwrap_or(style.compact);
@@ -1134,25 +1191,65 @@ fn tasks_section_bounds(
         if !heading.is_match(line) {
             continue;
         }
-        let level = line.chars().take_while(|ch| *ch == '#').count();
-        let section_start = idx + 1;
-        let mut section_end = section_start;
-        let mut in_fence = false;
-        while section_end < lines.len() {
-            let trimmed = lines[section_end].trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_fence = !in_fence;
-            } else if !in_fence
-                && let Some(next) = any_heading.captures(lines[section_end])
-                && next[1].len() <= level
-            {
-                break;
-            }
-            section_end += 1;
-        }
-        return Some((section_start, section_end));
+        return section_range_from(lines, idx, any_heading);
     }
     None
+}
+
+/// Bounds of the section under a custom heading title: exact trimmed-title
+/// match, case-insensitive, any `#` level, first match wins — the same
+/// semantics as the `todoHeading` display filter. A heading-like line inside
+/// a fenced code block never starts or ends the section.
+fn custom_section_bounds(
+    lines: &[&str],
+    want: &str,
+    any_heading: &Regex,
+) -> Option<(usize, usize)> {
+    let want_l = want.trim().to_lowercase();
+    if want_l.is_empty() {
+        return None;
+    }
+    let mut in_fence = false;
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let Some(caps) = any_heading.captures(line) else {
+            continue;
+        };
+        if caps[2].trim().to_lowercase() == want_l {
+            return section_range_from(lines, idx, any_heading);
+        }
+    }
+    None
+}
+
+/// Section content range starting after the heading at `idx`: until the next
+/// same-or-higher heading, ignoring heading-like lines inside fenced code
+/// blocks.
+fn section_range_from(lines: &[&str], idx: usize, any_heading: &Regex) -> Option<(usize, usize)> {
+    let level = lines[idx].chars().take_while(|ch| *ch == '#').count();
+    let section_start = idx + 1;
+    let mut section_end = section_start;
+    let mut in_fence = false;
+    while section_end < lines.len() {
+        let trimmed = lines[section_end].trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+        } else if !in_fence
+            && let Some(next) = any_heading.captures(lines[section_end])
+            && next[1].len() <= level
+        {
+            break;
+        }
+        section_end += 1;
+    }
+    Some((section_start, section_end))
 }
 
 fn tasks_section_insert_at(
@@ -1435,7 +1532,7 @@ mod tests {
     #[test]
     fn adds_under_todos_heading() {
         let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n- [ ] existing\n\n## Notes\n");
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(
             body,
@@ -1447,7 +1544,7 @@ mod tests {
     #[test]
     fn adds_under_tasks_heading() {
         let (vault, date, note) = vault_with("# Day\n\n## Tasks\n\n- [ ] existing\n\n## Notes\n");
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(
             body,
@@ -1461,7 +1558,7 @@ mod tests {
         let (vault, date, note) = vault_with(
             "# Day\n\n## Todos\n\n- [ ] first\n\n### Later\n\n- [ ] second\n\n## Notes\n",
         );
-        add_todo(&vault, date, "last").unwrap();
+        add_todo(&vault, date, "last", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(
             body,
@@ -1474,7 +1571,7 @@ mod tests {
     fn ignores_heading_like_lines_inside_fenced_code_block() {
         let (vault, date, note) =
             vault_with("# Day\n\n## Todos\n\n- [ ] first\n\n```\n## fake\n```\n\n## Notes\n");
-        add_todo(&vault, date, "last").unwrap();
+        add_todo(&vault, date, "last", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(
             body,
@@ -1486,16 +1583,174 @@ mod tests {
     #[test]
     fn preserves_blank_line_boundary_in_empty_section() {
         let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n## Notes\n");
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(body, "# Day\n\n## Todos\n\n- [ ] new one\n\n## Notes\n");
         let _ = fs::remove_dir_all(vault.root());
     }
 
     #[test]
+    fn adds_under_custom_heading() {
+        // The reported #32 template: todos live under `## Inbox` near the
+        // top, with later sections below. The new item must land in Inbox,
+        // not after `## Notes`.
+        let (vault, date, note) = vault_with(
+            "# Day\n\n## Focus\n\ntext\n\n## Inbox\n\n- [ ] existing\n\n## Notes\n\nbody\n",
+        );
+        add_todo(&vault, date, "new one", Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Focus\n\ntext\n\n## Inbox\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n\nbody\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn custom_heading_wins_over_tasks_section() {
+        let (vault, date, note) = vault_with(
+            "# Day\n\n## Inbox\n\n- [ ] in-inbox\n\n## Tasks\n\n- [ ] in-tasks\n\n## Notes\n",
+        );
+        add_todo(&vault, date, "new one", Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Inbox\n\n- [ ] in-inbox\n- [ ] new one\n\n## Tasks\n\n- [ ] in-tasks\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn custom_heading_matches_case_insensitively() {
+        let (vault, date, note) = vault_with("# Day\n\n## inbox\n\n- [ ] existing\n\n## Notes\n");
+        add_todo(&vault, date, "new one", Some("  Inbox  ")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## inbox\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn custom_heading_uses_first_match() {
+        let (vault, date, note) = vault_with(
+            "# Day\n\n## Inbox\n\n- [ ] first\n\n## Notes\n\n## Inbox\n\n- [ ] second\n",
+        );
+        add_todo(&vault, date, "new one", Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Inbox\n\n- [ ] first\n- [ ] new one\n\n## Notes\n\n## Inbox\n\n- [ ] second\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn missing_custom_heading_falls_back_to_tasks() {
+        let (vault, date, note) = vault_with("# Day\n\n## Tasks\n\n- [ ] existing\n\n## Notes\n");
+        add_todo(&vault, date, "new one", Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Tasks\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn missing_custom_heading_falls_back_to_first_list() {
+        let (vault, date, note) = vault_with("# Day\n\n- [ ] existing\n- [ ] also\n\n## Notes\n");
+        add_todo(&vault, date, "new one", Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n- [ ] existing\n- [ ] also\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn custom_heading_ignores_fenced_code_block() {
+        // A `## Inbox` line inside a fence must not become the insert
+        // target, and a peer-looking heading inside the custom section's
+        // fence must not end the section early.
+        let (vault, date, note) = vault_with(
+            "# Day\n\n```\n## Inbox\n```\n\n## Inbox\n\n- [ ] first\n\n```\n## Notes\n```\n- [ ] second\n\n## Notes\n",
+        );
+        add_todo(&vault, date, "last", Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n```\n## Inbox\n```\n\n## Inbox\n\n- [ ] first\n\n```\n## Notes\n```\n- [ ] second\n- [ ] last\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn blank_custom_heading_uses_default_placement() {
+        let (vault, date, note) = vault_with("# Day\n\n## Todos\n\n- [ ] existing\n\n## Notes\n");
+        add_todo(&vault, date, "new one", Some("   ")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Todos\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn add_under_line_ignores_custom_heading() {
+        // An explicit parent wins over the configured section.
+        let (vault, date, note) =
+            vault_with("# Day\n\n## Inbox\n\n- [ ] inbox-item\n\n## Notes\n\n- [ ] parent\n");
+        add_todo_under(&vault, date, "child", Some(9), Some("Inbox")).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Inbox\n\n- [ ] inbox-item\n\n## Notes\n\n- [ ] parent\n  - [ ] child\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_respects_custom_heading() {
+        let (vault, today, _) =
+            vault_with("# Day\n\n## Inbox\n\n- [ ] today-only\n\n## Notes\n\nbody\n");
+        let ynote = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&ynote, "- [ ] leftover\n- [x] finished\n").unwrap();
+        carry_over(&vault, today, Some("Inbox")).unwrap();
+        let body = fs::read_to_string(vault.root().join("Daily/2026-08-20.md")).unwrap();
+        assert_eq!(
+            body,
+            "# Day\n\n## Inbox\n\n- [ ] today-only\n- [ ] leftover\n\n## Notes\n\nbody\n"
+        );
+        assert_eq!(fs::read_to_string(&ynote).unwrap(), "- [x] finished\n");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn defer_respects_custom_heading() {
+        let (vault, date, note) = vault_with("- [ ] keep\n- [ ] later\n");
+        fs::write(
+            vault.root().join("Daily/2026-08-21.md"),
+            "# Next\n\n## Inbox\n\n- [ ] existing\n\n## Notes\n",
+        )
+        .unwrap();
+        defer_todo(&vault, date, 2, Some("later"), false, Some("Inbox")).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] keep\n");
+        let body = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
+        assert_eq!(
+            body,
+            "# Next\n\n## Inbox\n\n- [ ] existing\n- [ ] later\n\n## Notes\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
     fn appends_when_no_tasks_heading() {
         let (vault, date, note) = vault_with("# Day\n\nhello\n");
-        add_todo(&vault, date, "solo").unwrap();
+        add_todo(&vault, date, "solo", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(body, "# Day\n\n- [ ] solo\n\nhello\n");
         let _ = fs::remove_dir_all(vault.root());
@@ -1505,7 +1760,7 @@ mod tests {
     fn appends_to_first_todo_list_not_end_of_note() {
         let (vault, date, note) =
             vault_with("# Day\n\n- [ ] existing\n- [ ] also\n\n## Notes\n\nbody\n\n- [ ] stray\n");
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(
             body,
@@ -1517,7 +1772,7 @@ mod tests {
     #[test]
     fn keeps_compact_todo_spacing() {
         let (vault, date, note) = vault_with("# Day\n\n- [ ] existing\n\n## Notes\n");
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(body, "# Day\n\n- [ ] existing\n- [ ] new one\n\n## Notes\n");
         let _ = fs::remove_dir_all(vault.root());
@@ -1528,7 +1783,7 @@ mod tests {
         let (vault, date, note) = vault_with("# Day\n\n## Notes\n");
         let prev = vault.root().join("Daily").join("2026-08-19.md");
         fs::write(&prev, "# Prev\n\n- [ ] one\n- [ ] two\n\n## Notes\n").unwrap();
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(body, "# Day\n\n- [ ] new one\n\n## Notes\n");
         let _ = fs::remove_dir_all(vault.root());
@@ -1539,10 +1794,10 @@ mod tests {
         let (vault, date, note) = vault_with("# Day\n");
         let prev = vault.root().join("Daily").join("2026-08-19.md");
         fs::write(&prev, "# Prev\n\n- [ ] one\n\n- [ ] two\n").unwrap();
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(body, "# Day\n\n- [ ] new one\n");
-        add_todo(&vault, date, "second").unwrap();
+        add_todo(&vault, date, "second", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(body, "# Day\n\n- [ ] new one\n\n- [ ] second\n");
         let _ = fs::remove_dir_all(vault.root());
@@ -1552,7 +1807,7 @@ mod tests {
     fn inserts_after_frontmatter_and_title() {
         let (vault, date, note) =
             vault_with("---\ntags: daily\n---\n\n# Day\n\n## Notes\n\nbody\n");
-        add_todo(&vault, date, "solo").unwrap();
+        add_todo(&vault, date, "solo", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(
             body,
@@ -1566,7 +1821,7 @@ mod tests {
         // `## Day` as first content line is a date heading, not a section to
         // insert above (pullfrog review on #33).
         let (vault, date, note) = vault_with("## Day\n");
-        add_todo(&vault, date, "solo").unwrap();
+        add_todo(&vault, date, "solo", None).unwrap();
         let body = fs::read_to_string(&note).unwrap();
         assert_eq!(body, "## Day\n\n- [ ] solo\n");
         let _ = fs::remove_dir_all(vault.root());
@@ -1634,7 +1889,7 @@ mod tests {
             archive: None,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
-        add_todo(&vault, date, "first").unwrap();
+        add_todo(&vault, date, "first", None).unwrap();
         let note = root.join("Daily/2026-08-20.md");
         let body = fs::read_to_string(&note).unwrap();
         assert!(body.contains("# 2026-08-20"));
@@ -1728,7 +1983,7 @@ mod tests {
             "- [ ] parent\n  - [ ] child\n  - [x] done-child\n- [x] finished\n- [ ] solo\n",
         )
         .unwrap();
-        let snap = carry_over(&vault, today).unwrap();
+        let snap = carry_over(&vault, today, None).unwrap();
         let todos = snap.todos.unwrap();
         assert_eq!(todos.len(), 4);
         assert_eq!(todos[0].text, "keep");
@@ -1754,7 +2009,7 @@ mod tests {
         let (vault, today, _) = vault_with("");
         let ynote = vault.root().join("Daily").join("2026-08-19.md");
         fs::write(&ynote, "- [x] parent\n    - [ ] deep-child\n").unwrap();
-        let snap = carry_over(&vault, today).unwrap();
+        let snap = carry_over(&vault, today, None).unwrap();
         let todos = snap.todos.unwrap();
         assert_eq!(todos.len(), 1);
         assert_eq!(todos[0].text, "deep-child");
@@ -1771,7 +2026,7 @@ mod tests {
             template: None,
             archive: None,
         };
-        assert!(!ensure_note(&vault, &config, &note, date).unwrap());
+        assert!(!ensure_note(&vault, &config, &note, date, None).unwrap());
         assert_eq!(fs::read_to_string(&note).unwrap(), "keep\n");
         let _ = fs::remove_dir_all(vault.root());
     }
@@ -1781,7 +2036,7 @@ mod tests {
         let (vault, today, _) = vault_with("- [ ] today-only\n");
         let ynote = vault.root().join("Daily").join("2026-08-19.md");
         fs::write(&ynote, "- [ ] leftover\n- [x] finished\n").unwrap();
-        let snap = carry_over(&vault, today).unwrap();
+        let snap = carry_over(&vault, today, None).unwrap();
         let texts: Vec<_> = snap.todos.unwrap().into_iter().map(|t| t.text).collect();
         assert!(texts.contains(&"leftover".to_string()));
         assert!(texts.contains(&"today-only".to_string()));
@@ -1789,7 +2044,7 @@ mod tests {
         // Moved, not copied: the previous note keeps only its done todos.
         assert_eq!(fs::read_to_string(&ynote).unwrap(), "- [x] finished\n");
         // Idempotent: second carry-over does not duplicate.
-        let snap2 = carry_over(&vault, today).unwrap();
+        let snap2 = carry_over(&vault, today, None).unwrap();
         assert_eq!(
             snap2
                 .todos
@@ -1810,7 +2065,7 @@ mod tests {
         let (vault, today, _) = vault_with("- [ ] ghost\n");
         let ynote = vault.root().join("Daily").join("2026-08-19.md");
         fs::write(&ynote, "- [ ] ghost\n- [x] done\n").unwrap();
-        carry_over(&vault, today).unwrap();
+        carry_over(&vault, today, None).unwrap();
         assert_eq!(fs::read_to_string(&ynote).unwrap(), "- [x] done\n");
         let texts: Vec<_> = read_snapshot(&vault, today)
             .unwrap()
@@ -1847,7 +2102,7 @@ mod tests {
             archive: None,
         };
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
-        let snap = carry_over(&vault, date).unwrap();
+        let snap = carry_over(&vault, date, None).unwrap();
         let todos = snap.todos.unwrap();
         assert_eq!(todos.len(), 2);
         assert_eq!(todos[0].text, "drag along");
@@ -1887,7 +2142,7 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // First write of the new day creates the note and rolls yesterday's
         // open todos into it.
-        add_todo(&vault, date, "fresh").unwrap();
+        add_todo(&vault, date, "fresh", None).unwrap();
         let body = fs::read_to_string(vault.root().join("Daily/2026-08-20.md")).unwrap();
         assert!(body.contains("- [ ] drag along\n  - [ ] nested\n"));
         assert!(body.contains("- [ ] fresh"));
@@ -1901,7 +2156,7 @@ mod tests {
     #[test]
     fn defer_moves_todo_to_next_day() {
         let (vault, date, note) = vault_with("- [ ] keep\n- [ ] later\n");
-        defer_todo(&vault, date, 2, Some("later"), false).unwrap();
+        defer_todo(&vault, date, 2, Some("later"), false, None).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] keep\n");
         let next = vault.root().join("Daily/2026-08-21.md");
         let body = fs::read_to_string(&next).unwrap();
@@ -1914,7 +2169,7 @@ mod tests {
     fn defer_moves_children_and_preserves_checked() {
         let (vault, date, note) =
             vault_with("- [ ] parent\n  - [x] child\n    - [ ] grand\n- [ ] sibling\n");
-        defer_todo(&vault, date, 1, Some("parent"), true).unwrap();
+        defer_todo(&vault, date, 1, Some("parent"), true, None).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] sibling\n");
         let body = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
         assert!(
@@ -1927,7 +2182,7 @@ mod tests {
     #[test]
     fn defer_creates_next_day_without_rolling_over_the_rest() {
         let (vault, date, note) = vault_with("- [ ] stay\n- [ ] move me\n");
-        defer_todo(&vault, date, 2, Some("move me"), true).unwrap();
+        defer_todo(&vault, date, 2, Some("move me"), true, None).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] stay\n");
         let next = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
         assert!(next.contains("- [ ] move me"), "next: {next}");
@@ -1938,7 +2193,7 @@ mod tests {
     #[test]
     fn defer_rebases_nested_item_to_top_level() {
         let (vault, date, note) = vault_with("- [ ] parent\n  - [ ] child\n");
-        defer_todo(&vault, date, 2, Some("child"), true).unwrap();
+        defer_todo(&vault, date, 2, Some("child"), true, None).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "- [ ] parent\n");
         let next = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
         assert!(next.contains("- [ ] child"), "next: {next}");
@@ -1968,7 +2223,7 @@ mod tests {
             root: root.clone(),
             archive: Some("dailies/_archive/YYYY".into()),
         };
-        defer_todo(&vault, date, 1, Some("move me"), false).unwrap();
+        defer_todo(&vault, date, 1, Some("move me"), false, None).unwrap();
         assert!(
             !root.join("dailies/2026-08-21.md").exists(),
             "defer must not create a live copy when tomorrow is archived"
@@ -1988,7 +2243,7 @@ mod tests {
         // note present, adding must not spawn a live duplicate.
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let (vault, archived) = archived_vault(date, "# Archived\n");
-        add_todo(&vault, date, "new one").unwrap();
+        add_todo(&vault, date, "new one", None).unwrap();
         assert!(
             !vault.root().join("dailies/2026-08-20.md").exists(),
             "add must not create a live copy when the note is archived"
@@ -2020,7 +2275,7 @@ mod tests {
         let daily = vault.root().join("Daily");
         fs::remove_dir_all(&daily).unwrap();
         symlink(&outside, &daily).unwrap();
-        let err = add_todo(&vault, date, "nope").unwrap_err();
+        let err = add_todo(&vault, date, "nope", None).unwrap_err();
         assert!(err.to_string().contains("outside the vault"), "err: {err}");
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         let _ = fs::remove_dir_all(vault.root());
@@ -2050,7 +2305,7 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         // Note creation must fail before any directory is created through
         // the symlinked folder outside the vault.
-        let err = add_todo(&vault, date, "nope").unwrap_err();
+        let err = add_todo(&vault, date, "nope", None).unwrap_err();
         assert!(err.to_string().contains("outside the vault"), "err: {err}");
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         let _ = fs::remove_dir_all(vault.root());
@@ -2205,7 +2460,7 @@ mod tests {
         let today = vault.root().join("dailies/2026-08-20.md");
         fs::create_dir_all(today.parent().unwrap()).unwrap();
         fs::write(&today, "- [ ] already here\n").unwrap();
-        carry_over(&vault, date).unwrap();
+        carry_over(&vault, date, None).unwrap();
         let body = fs::read_to_string(&today).unwrap();
         assert!(body.contains("leftover"));
         assert!(body.contains("already here"));

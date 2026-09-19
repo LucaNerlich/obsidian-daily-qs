@@ -95,6 +95,7 @@ BarWidget {
   readonly property string vaultPathSetting: String(setting("vaultPath", "") || "")
   readonly property string vaultPath: Model.expandPath(vaultPathSetting, homeDir)
   readonly property string todoHeading: String(setting("todoHeading", "") || "").trim()
+  readonly property string insertHeading: String(setting("insertHeading", "") || "").trim()
   readonly property string archiveFolder: String(setting("archiveFolder", "") || "").trim()
   readonly property bool openOnlyDefault: setting("openOnly", false) === true
   readonly property bool hideWhenDone: setting("hideWhenDone", false) === true
@@ -135,6 +136,18 @@ BarWidget {
     var args = []
     if (root.todoHeading !== "")
       args.push("--heading", root.todoHeading)
+    return args
+  }
+
+  // Effective insert target: explicit insertHeading wins, otherwise follow
+  // todoHeading so a single setting covers display + insertion. Empty means
+  // the backend default (Tasks/Todos, then first list, then after title).
+  readonly property string effectiveInsertHeading: root.insertHeading !== "" ? root.insertHeading : root.todoHeading
+
+  function insertHeadingArgs() {
+    var args = []
+    if (root.effectiveInsertHeading !== "")
+      args.push("--heading", root.effectiveInsertHeading)
     return args
   }
 
@@ -274,7 +287,7 @@ BarWidget {
     var trimmed = String(text || "").trim()
     if (trimmed === "") return
     var d = root.viewDate || Model.todayIso()
-    var args = ["add", "--date", d, "--text", trimmed]
+    var args = ["add", "--date", d, "--text", trimmed].concat(root.insertHeadingArgs())
     var n = Number(underLine)
     if (isFinite(n) && n >= 1)
       args.push("--under-line", String(Math.floor(n)))
@@ -319,7 +332,7 @@ BarWidget {
     var n = Number(line)
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
-    var args = ["defer", "--date", d, "--line", String(Math.floor(n))]
+    var args = ["defer", "--date", d, "--line", String(Math.floor(n))].concat(root.insertHeadingArgs())
     if (typeof text === "string" && text !== "")
       args.push("--expect-text", text)
     if (withChildren === true)
@@ -344,7 +357,7 @@ BarWidget {
 
   function carryOver() {
     var d = root.viewDate || Model.todayIso()
-    root.runAction(["carry-over", "--date", d])
+    root.runAction(["carry-over", "--date", d].concat(root.insertHeadingArgs()))
   }
 
   function openInObsidian() {

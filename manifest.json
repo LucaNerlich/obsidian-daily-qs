@@ -21,6 +21,7 @@
       "openOnly": false,
       "vaultPath": "",
       "todoHeading": "",
+      "insertHeading": "",
       "hideWhenDone": false,
       "hideWhenEmpty": false
     },
@@ -44,6 +45,13 @@
         "type": "string",
         "label": "Todo heading",
         "description": "Only show todos under this markdown heading (e.g. Todos or Tasks). Empty = all todos.",
+        "defaultValue": ""
+      },
+      {
+        "key": "insertHeading",
+        "type": "string",
+        "label": "Insert heading",
+        "description": "Heading new todos are added under (e.g. Inbox). Empty = follow Todo heading, then Tasks/Todos.",
         "defaultValue": ""
       },
       {
