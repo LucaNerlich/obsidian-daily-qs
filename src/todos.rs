@@ -802,8 +802,13 @@ fn apply_style_from_content(
 }
 
 fn is_title_heading(line: &str) -> bool {
-    let t = line.trim_end();
-    t.starts_with("# ") && !t.starts_with("##")
+    // Any heading level counts as the date/title heading when it is the
+    // note's first content line (e.g. `## 2026-08-20` in daily-notes
+    // templates). The caller only checks the first line after frontmatter
+    // and blank lines, so H1-only matching would insert above `##` titles.
+    let t = line.trim();
+    let hashes = t.chars().take_while(|c| *c == '#').count();
+    (1..=6).contains(&hashes) && t[hashes..].starts_with([' ', '\t'])
 }
 
 fn skip_frontmatter(lines: &[&str]) -> usize {
@@ -1373,6 +1378,17 @@ mod tests {
             body,
             "---\ntags: daily\n---\n\n# Day\n\n- [ ] solo\n\n## Notes\n\nbody\n"
         );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn inserts_below_h2_date_heading() {
+        // `## Day` as first content line is a date heading, not a section to
+        // insert above (pullfrog review on #33).
+        let (vault, date, note) = vault_with("## Day\n");
+        add_todo(&vault, date, "solo").unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        assert_eq!(body, "## Day\n\n- [ ] solo\n");
         let _ = fs::remove_dir_all(vault.root());
     }
 
