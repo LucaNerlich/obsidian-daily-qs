@@ -107,7 +107,9 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
   - New items append to the first todo list (usually at the top). Spacing is
     copied from that list, or from recent daily notes when starting a new one.
   - Right-click a row to delete it or move it to tomorrow (children included).
-  - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation.
+  - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation
+    (undoing a defer restores both days; a tomorrow note created by the
+    defer is deleted again).
   - Week strip jumps between days; ◀ / ● / ▶ also navigate.
   - Search: `/`; open-only toggle; carry over; open in Obsidian. Opening a
     missing day creates its note from the configured daily-note template.

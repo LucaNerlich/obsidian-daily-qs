@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spacing between todos is copied from the current note, or from recent
   daily notes when the list is still empty — compact lists stay compact.
 
+### Fixed
+
+- Defer and add now respect the archive folder: when a note exists only in
+  the archive, they edit it in place instead of creating a live duplicate.
+  Deferred items use the same first-list placement and spacing as new todos.
+- Undoing a defer restores both days (a tomorrow note created by the defer
+  is deleted again). Undo records from previous versions still restore.
+- A failed defer rolls the destination back instead of leaving the item in
+  both days, and deferring onto the same note is refused.
+- Left-clicking a todo while its context menu is open only dismisses the
+  menu instead of also toggling the row.
+
 ## [1.8.1] - 2026-09-01
 
 ### Fixed

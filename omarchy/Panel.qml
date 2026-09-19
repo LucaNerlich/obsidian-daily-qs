@@ -761,7 +761,10 @@ Panel {
                           root.openTodoMenu(todoRow, modelData)
                           return
                         }
-                        root.closeTodoMenu()
+                        if (root.todoMenuOpen) {
+                          root.closeTodoMenu()
+                          return
+                        }
                         root.toggleTodo(modelData.line, modelData.text)
                       }
                       onDoubleClicked: {

@@ -469,24 +469,9 @@ fn add_todo_lines(
     add_checkbox_lines(vault, date, &formatted, true)
 }
 
-fn add_checkbox_lines(
-    vault: &Vault,
-    date: NaiveDate,
-    items: &[(usize, bool, String)],
-    rollover: bool,
-) -> Result<(), VaultError> {
-    let config = vault.daily_notes_config()?;
-    let path = vault.daily_note_path(&config, date)?;
-    if rollover {
-        ensure_note(vault, &config, &path, date)?;
-    } else {
-        create_note_if_missing(vault, &config, &path, date)?;
-    }
-    let path = resolved_note_path(vault, &config, date)?;
-    let content = fs::read_to_string(&path)
-        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+fn format_checkbox_lines(items: &[(usize, bool, String)]) -> Vec<String> {
     let mut prev_depth: Option<usize> = None;
-    let lines: Vec<String> = items
+    items
         .iter()
         .map(|(depth, checked, text)| {
             let d = match prev_depth {
@@ -497,7 +482,27 @@ fn add_checkbox_lines(
             let mark = if *checked { "x" } else { " " };
             format!("{}- [{mark}] {text}", "  ".repeat(d))
         })
-        .collect();
+        .collect()
+}
+
+fn add_checkbox_lines(
+    vault: &Vault,
+    date: NaiveDate,
+    items: &[(usize, bool, String)],
+    rollover: bool,
+) -> Result<(), VaultError> {
+    let config = vault.daily_notes_config()?;
+    // Resolve first so archived notes are edited in place instead of
+    // spawning a live duplicate when the live path is missing.
+    let path = resolved_note_path(vault, &config, date)?;
+    if rollover {
+        ensure_note(vault, &config, &path, date)?;
+    } else {
+        create_note_if_missing(vault, &config, &path, date)?;
+    }
+    let content = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    let lines = format_checkbox_lines(items);
     let style = infer_todo_style(vault, date, &content);
     let next = insert_todo_lines(&content, &lines, style);
     if rollover {
@@ -661,13 +666,30 @@ pub fn delete_todo(
 /// Move a todo (and nested children) to the next calendar day.
 ///
 /// Creates that note from the daily-note template when missing, without
-/// rolling over the rest of the source day's open todos.
+/// rolling over the rest of the source day's open todos. A single `undo`
+/// restores both notes (a tomorrow note created by the defer is deleted
+/// again); if the source write fails after the destination append, the
+/// destination is rolled back so the item is never duplicated.
 pub fn defer_todo(
     vault: &Vault,
     date: NaiveDate,
     line: usize,
     expect_text: Option<&str>,
     with_children: bool,
+) -> Result<Snapshot, VaultError> {
+    defer_todo_to(vault, date, line, expect_text, with_children, None)
+}
+
+/// Same as [`defer_todo`] but records undo to an explicit file when given.
+/// Tests pass a per-test path so parallel threads never share the global
+/// undo file.
+pub fn defer_todo_to(
+    vault: &Vault,
+    date: NaiveDate,
+    line: usize,
+    expect_text: Option<&str>,
+    with_children: bool,
+    undo_dest: Option<&Path>,
 ) -> Result<Snapshot, VaultError> {
     if line == 0 {
         return Err(VaultError::Io("line must be >= 1".into()));
@@ -715,10 +737,57 @@ pub fn defer_todo(
         item.0 = item.0.saturating_sub(base_depth);
     }
 
-    // Create / append on the next day first so a crash still leaves the
-    // item somewhere. Skip carry-over: deferring one todo must not pull
-    // the rest of today's list along with it.
-    add_checkbox_lines(vault, next_date, &moving, false)?;
+    let dest_path = resolved_note_path(vault, &config, next_date)?;
+    if dest_path == path {
+        return Err(VaultError::Io("cannot defer onto the same note".into()));
+    }
+    let dest_existed = dest_path.exists();
+    let dest_before: Option<String> =
+        if dest_existed {
+            Some(fs::read_to_string(&dest_path).map_err(|e| {
+                VaultError::Io(format!("failed to read {}: {e}", dest_path.display()))
+            })?)
+        } else {
+            None
+        };
+
+    // Record both `before` states before mutating anything, so one undo
+    // restores both notes. The destination write below is plain atomic
+    // (no second undo record to clobber this one) and the source write is
+    // too — both are covered here.
+    let record = |files: &[(&Path, Option<&str>)]| match undo_dest {
+        Some(dest) => crate::undo::record_before_multi_to(vault, date, files, dest),
+        None => crate::undo::record_before_multi(vault, date, files),
+    };
+    let discard_record = || match undo_dest {
+        Some(dest) => crate::undo::discard_at(dest),
+        None => crate::undo::discard(),
+    };
+    record(&[
+        (&path, Some(content.as_str())),
+        (&dest_path, dest_before.as_deref()),
+    ])?;
+
+    // Create the destination from the template when missing (no carry-over:
+    // deferring one todo must not pull the rest of today's list along).
+    if let Err(e) = create_note_if_missing(vault, &config, &dest_path, next_date) {
+        discard_record();
+        return Err(e);
+    }
+    let dest_content = fs::read_to_string(&dest_path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", dest_path.display())))?;
+    let dest_next = insert_todo_lines(
+        &dest_content,
+        &format_checkbox_lines(&moving),
+        infer_todo_style(vault, next_date, &dest_content),
+    );
+    if let Err(e) = write_atomic(vault.root(), &dest_path, &dest_next) {
+        if !dest_existed {
+            let _ = fs::remove_file(&dest_path);
+        }
+        discard_record();
+        return Err(e);
+    }
 
     let kept: Vec<&str> = content
         .lines()
@@ -730,7 +799,19 @@ pub fn defer_todo(
     if content.ends_with('\n') && !next.is_empty() {
         next.push('\n');
     }
-    write_atomic_with_undo(vault, date, &path, &content, &next)?;
+    if let Err(e) = write_atomic(vault.root(), &path, &next) {
+        // Roll the destination back so a failed defer never duplicates.
+        match dest_before {
+            Some(before) => {
+                let _ = write_atomic(vault.root(), &dest_path, &before);
+            }
+            None => {
+                let _ = fs::remove_file(&dest_path);
+            }
+        }
+        discard_record();
+        return Err(e);
+    }
     read_snapshot(vault, date)
 }
 
@@ -1862,6 +1943,58 @@ mod tests {
         let next = fs::read_to_string(vault.root().join("Daily/2026-08-21.md")).unwrap();
         assert!(next.contains("- [ ] child"), "next: {next}");
         assert!(!next.contains("  - [ ] child"), "next: {next}");
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn defer_to_archived_tomorrow_uses_archive_in_place() {
+        // Tomorrow exists only in the archive folder: defer must append there
+        // instead of creating a live duplicate.
+        let root = unique_temp("defer-archived");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir_all(root.join("dailies")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"dailies","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        fs::write(root.join("dailies/2026-08-20.md"), "- [ ] move me\n").unwrap();
+        let archived_tomorrow = root.join("dailies/_archive/2026/2026-08-21.md");
+        fs::create_dir_all(archived_tomorrow.parent().unwrap()).unwrap();
+        fs::write(&archived_tomorrow, "# Archived\n").unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: Some("dailies/_archive/YYYY".into()),
+        };
+        defer_todo(&vault, date, 1, Some("move me"), false).unwrap();
+        assert!(
+            !root.join("dailies/2026-08-21.md").exists(),
+            "defer must not create a live copy when tomorrow is archived"
+        );
+        let body = fs::read_to_string(&archived_tomorrow).unwrap();
+        assert!(body.contains("- [ ] move me"), "archived: {body}");
+        assert_eq!(
+            fs::read_to_string(root.join("dailies/2026-08-20.md")).unwrap(),
+            ""
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn add_todo_edits_archived_note_in_place() {
+        // Guard for the add_checkbox_lines path fix: with only an archived
+        // note present, adding must not spawn a live duplicate.
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let (vault, archived) = archived_vault(date, "# Archived\n");
+        add_todo(&vault, date, "new one").unwrap();
+        assert!(
+            !vault.root().join("dailies/2026-08-20.md").exists(),
+            "add must not create a live copy when the note is archived"
+        );
+        let body = fs::read_to_string(&archived).unwrap();
+        assert!(body.contains("- [ ] new one"), "archived: {body}");
         let _ = fs::remove_dir_all(vault.root());
     }
 
