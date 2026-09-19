@@ -33,7 +33,7 @@ jobs:
       - name: Inspect committed ELF
         run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh ${{ matrix.target }}
 
-      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.98.1
         with:
           targets: ${{ matrix.target }}
 

@@ -168,7 +168,7 @@ for target in "${targets[@]}"; do
 
 The source fingerprint matches, so this is a toolchain/flags drift rather
 than a forgotten rebuild. Run 'scripts/build-bundle.sh' with the pinned
-1.97.1 musl toolchain and commit the result."
+1.98.1 musl toolchain and commit the result."
   fi
   echo "rebuild verified ($arch): $actual"
 done
