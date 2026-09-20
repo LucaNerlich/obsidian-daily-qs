@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-09-20
+
+### Added
+
+- Configurable todo sort order: new `sortOrder` bar setting with `default`
+  (file order, new todos append to the bottom), `newest` (newest first),
+  and `openFirst` (uncompleted first, then newest). An in-panel sort button
+  next to *Hide done* cycles through the orders. Parent-child hierarchy is
+  preserved in every order.
+- Inline delete button: hovering (or selecting) a todo row reveals a ✕
+  button that deletes the todo (with children) without opening the context
+  menu. Right-click menu still offers delete and *Do tomorrow*.
+
+### Changed
+
+- Clicking a todo row now only selects it; completion toggles via the
+  checkbox (or Enter/Space on the keyboard selection). Double-click still
+  edits in place. Hovering a truncated row shows the full text in a tooltip
+  while the row itself stays single-line elided.
+
 ## [1.9.1] - 2026-09-19
 
 ### Changed

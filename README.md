@@ -102,7 +102,13 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
 
 - **Bar**: Obsidian mark + done/total for today. Left-click opens the panel; middle/right-click opens the note in Obsidian.
 - **Panel**:
-  - List todos; click or Enter/Space (with keyboard cursor) to toggle.
+  - List todos; click a row (or move the keyboard cursor) to select it,
+    click its checkbox or press Enter/Space to toggle. Hover a truncated
+    row to see the full text.
+  - Sort order is file order by default, so new todos append to the bottom.
+    Cycle newest-first / uncompleted-first with the sort button next to
+    *Hide done*, or set `sortOrder` (`default`, `newest`, `openFirst`).
+    Parent-child hierarchy is preserved in every order.
   - Nested todos render indented; Shift+Enter adds under the selected row.
   - New items go under the configured `insertHeading` (or `todoHeading` when
     `insertHeading` is empty). When both are empty, the built-in `Tasks`/`Todos`
@@ -110,6 +116,7 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
     Spacing is copied from that list, or from recent daily notes when starting
     a new one.
   - Right-click a row to delete it or move it to tomorrow (children included).
+    Hovering (or selecting) a row also reveals an inline ✕ delete button.
   - `e` edits, `x` deletes, `[`/`]` outdent/indent, `u` undoes the last mutation
     (undoing a defer restores both days; a tomorrow note created by the
     defer is deleted again).
@@ -119,10 +126,11 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
     uses the most recent such note within the last 30 days (weekend/vacation
     gaps), nearest first; repeat to drain older backlog. Opening a
     missing day creates its note from the configured daily-note template.
-- **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `archiveFolder`, `openOnly`, `todoHeading`, `insertHeading`, `hideWhenDone`, `hideWhenEmpty`.
+- **Settings** (`omarchy bar set luca.obsidian-daily …`): `vaultPath`, `archiveFolder`, `openOnly`, `sortOrder`, `todoHeading`, `insertHeading`, `hideWhenDone`, `hideWhenEmpty`.
 
 ```bash
 omarchy bar set luca.obsidian-daily openOnly true
+omarchy bar set luca.obsidian-daily sortOrder newest
 omarchy bar set luca.obsidian-daily todoHeading Todos
 omarchy bar set luca.obsidian-daily insertHeading Inbox
 ```
