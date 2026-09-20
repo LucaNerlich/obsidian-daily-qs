@@ -764,7 +764,7 @@ Panel {
                     required property var modelData
                     required property int index
                     property int todoIndex: index
-                    property bool hovered: todoMouse.containsMouse || checkboxMouse.containsMouse
+                    property bool hovered: todoMouse.containsMouse || checkboxMouse.containsMouse || (deleteButton && deleteButton.isHovered)
                     x: -root.todoHoverOverflow
                     width: todoColumn.width + root.todoHoverOverflow * 2
                     implicitHeight: todoInner.implicitHeight + Style.space(8)
@@ -799,7 +799,7 @@ Panel {
                     }
 
                     PanelToolTip {
-                      visible: todoRow.hovered && root.editingLine !== modelData.line && modelData.text.length > 0
+                      visible: (todoMouse.containsMouse || checkboxMouse.containsMouse) && root.editingLine !== modelData.line && modelData.text.length > 0
                       text: modelData.text
                       fontFamily: root.fontFamily
                     }
@@ -891,6 +891,26 @@ Panel {
                         font.pixelSize: Style.font.body
                         font.strikeout: modelData.checked === true
                         elide: Text.ElideRight
+                      }
+
+                      PanelActionButton {
+                        id: deleteButton
+                        Layout.alignment: Qt.AlignVCenter
+                        property bool isHovered: false
+                        visible: (todoRow.hovered || isHovered || root.selectedIndex === index) && root.editingLine !== modelData.line
+                        iconText: "\u2715"
+                        tooltipText: "Delete todo"
+                        foreground: root.dim
+                        hoverColor: root.urgent
+                        fontFamily: root.fontFamily
+                        fontSize: Style.font.caption
+                        size: Style.space(20)
+                        onHovered: function(h) { isHovered = h }
+                        onClicked: {
+                          root.selectedIndex = index
+                          if (root.todoMenuOpen) root.closeTodoMenu()
+                          root.deleteTodo(modelData)
+                        }
                       }
                     }
                   }
