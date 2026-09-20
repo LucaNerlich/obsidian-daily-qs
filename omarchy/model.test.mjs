@@ -222,9 +222,9 @@ test("visibleTodos combines search and openOnly", () => {
 test("visibleTodos sortOrder", () => {
   const status = {
     todos: [
-      { line: 1, checked: true, text: "first", depth: 0 },
-      { line: 2, checked: false, text: "second", depth: 0 },
-      { line: 3, checked: false, text: "third", depth: 0 },
+      { line: 1, checked: true, text: "Beta", depth: 0 },
+      { line: 3, checked: false, text: "ALPHA", depth: 0 },
+      { line: 2, checked: false, text: "alpha", depth: 0 },
     ],
   };
   const newest = Model.visibleTodos(status, false, "", "newest");
@@ -235,8 +235,11 @@ test("visibleTodos sortOrder", () => {
   const openFirst = Model.visibleTodos(status, false, "", "openFirst");
   assert.deepEqual([...openFirst.map((t) => t.line)], [3, 2, 1]);
 
+  const alpha = Model.visibleTodos(status, false, "", "alpha");
+  assert.deepEqual([...alpha.map((t) => t.line)], [2, 3, 1]);
+
   const def = Model.visibleTodos(status, false, "", "default");
-  assert.deepEqual([...def.map((t) => t.line)], [1, 2, 3]);
+  assert.deepEqual([...def.map((t) => t.line)], [1, 3, 2]);
 });
 
 test("visibleTodos newest keeps children with parents", () => {
