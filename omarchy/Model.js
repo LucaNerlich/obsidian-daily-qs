@@ -232,7 +232,7 @@ function isVaultSetupError(status) {
 
 function sortTodos(items, sortOrder) {
   if (!Array.isArray(items) || items.length <= 1) return items;
-  if (!sortOrder || sortOrder === "default" || sortOrder === "file") return items;
+  if (!sortOrder || sortOrder === "default") return items;
 
   var topLevel = [];
   var childrenMap = {};

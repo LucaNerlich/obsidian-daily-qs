@@ -26,7 +26,11 @@ Panel {
   readonly property real todoHoverOverflow: Style.space(6)
 
   property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
-  property string sortOrder: hasWatcher ? (watcher.sortOrderSetting || "newest") : "newest"
+  property string sortOrder: {
+    if (!hasWatcher) return "newest"
+    var s = String(watcher.sortOrderSetting || "newest")
+    return (s === "newest" || s === "openFirst" || s === "default") ? s : "newest"
+  }
   property string searchText: ""
   property int selectedIndex: -1
   property int editingLine: -1
@@ -693,7 +697,7 @@ Panel {
                 id: sortButton
                 Layout.alignment: Qt.AlignVCenter
                 Layout.topMargin: 4
-                iconText: root.sortOrder === "newest" ? "\u2193" : (root.sortOrder === "openFirst" ? "\u2713" : "\u2191")
+                iconText: root.sortOrder === "newest" ? "\u2193" : (root.sortOrder === "openFirst" ? "\u21C5" : "\u2191")
                 tooltipText: {
                   if (root.sortOrder === "newest") return "Sort: Newest first (click to cycle)"
                   if (root.sortOrder === "openFirst") return "Sort: Unchecked first (click to cycle)"
@@ -799,7 +803,7 @@ Panel {
                     }
 
                     PanelToolTip {
-                      visible: (todoMouse.containsMouse || checkboxMouse.containsMouse) && root.editingLine !== modelData.line && modelData.text.length > 0
+                      visible: (todoMouse.containsMouse || checkboxMouse.containsMouse) && root.editingLine !== modelData.line && modelData.text.length > 0 && todoText.truncated
                       text: modelData.text
                       fontFamily: root.fontFamily
                     }
@@ -881,6 +885,7 @@ Panel {
                       }
 
                       Text {
+                        id: todoText
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
                         visible: root.editingLine !== modelData.line
@@ -891,6 +896,7 @@ Panel {
                         font.pixelSize: Style.font.body
                         font.strikeout: modelData.checked === true
                         elide: Text.ElideRight
+                        wrapMode: Text.NoWrap
                       }
 
                       PanelActionButton {
