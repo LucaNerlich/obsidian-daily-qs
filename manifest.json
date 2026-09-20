@@ -19,7 +19,7 @@
     "defaultSection": "right",
     "defaults": {
       "openOnly": false,
-      "sortOrder": "newest",
+      "sortOrder": "default",
       "vaultPath": "",
       "todoHeading": "",
       "insertHeading": "",
@@ -73,8 +73,8 @@
         "key": "sortOrder",
         "type": "string",
         "label": "Sort order",
-        "description": "How todos are ordered in the panel: 'newest' (newest first / top), 'default' (file order), or 'openFirst' (uncompleted first).",
-        "defaultValue": "newest"
+        "description": "How todos are ordered in the panel: 'default' (file order, new todos append to the bottom), 'newest' (newest first / top), or 'openFirst' (uncompleted first).",
+        "defaultValue": "default"
       }
     ]
   }

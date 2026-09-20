@@ -99,8 +99,8 @@ BarWidget {
   readonly property string archiveFolder: String(setting("archiveFolder", "") || "").trim()
   readonly property bool openOnlyDefault: setting("openOnly", false) === true
   readonly property string sortOrderSetting: {
-    var s = String(setting("sortOrder", "newest") || "newest")
-    return (s === "newest" || s === "openFirst" || s === "default") ? s : "newest"
+    var s = String(setting("sortOrder", "default") || "default")
+    return (s === "newest" || s === "openFirst" || s === "default") ? s : "default"
   }
   readonly property bool hideWhenDone: setting("hideWhenDone", false) === true
   readonly property bool hideWhenEmpty: setting("hideWhenEmpty", false) === true

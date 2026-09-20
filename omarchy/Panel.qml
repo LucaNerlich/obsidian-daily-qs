@@ -27,9 +27,9 @@ Panel {
 
   property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
   property string sortOrder: {
-    if (!hasWatcher) return "newest"
-    var s = String(watcher.sortOrderSetting || "newest")
-    return (s === "newest" || s === "openFirst" || s === "default") ? s : "newest"
+    if (!hasWatcher) return "default"
+    var s = String(watcher.sortOrderSetting || "default")
+    return (s === "newest" || s === "openFirst" || s === "default") ? s : "default"
   }
   property string searchText: ""
   property int selectedIndex: -1
