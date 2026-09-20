@@ -219,6 +219,51 @@ test("visibleTodos combines search and openOnly", () => {
   assert.deepEqual(visible.map((t) => t.text), ["parent", "child alpha"]);
 });
 
+test("visibleTodos sortOrder", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: true, text: "first", depth: 0 },
+      { line: 2, checked: false, text: "second", depth: 0 },
+      { line: 3, checked: false, text: "third", depth: 0 },
+    ],
+  };
+  const newest = Model.visibleTodos(status, false, "", "newest");
+  // Spread into main-realm arrays: the vm sandbox gives rebuilt arrays its
+  // own Array prototype, which strict deepEqual rejects.
+  assert.deepEqual([...newest.map((t) => t.line)], [3, 2, 1]);
+
+  const openFirst = Model.visibleTodos(status, false, "", "openFirst");
+  assert.deepEqual([...openFirst.map((t) => t.line)], [3, 2, 1]);
+
+  const def = Model.visibleTodos(status, false, "", "default");
+  assert.deepEqual([...def.map((t) => t.line)], [1, 2, 3]);
+});
+
+test("visibleTodos newest keeps children with parents", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: false, text: "parent", depth: 0, parentLine: null },
+      { line: 2, checked: false, text: "child", depth: 1, parentLine: 1 },
+      { line: 3, checked: false, text: "top-new", depth: 0, parentLine: null },
+    ],
+  };
+  const newest = Model.visibleTodos(status, false, "", "newest");
+  assert.deepEqual([...newest.map((t) => t.line)], [3, 1, 2]);
+});
+
+test("visibleTodos openFirst groups unchecked before checked", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: false, text: "old-open", depth: 0 },
+      { line: 2, checked: true, text: "mid-done", depth: 0 },
+      { line: 3, checked: true, text: "new-done", depth: 0 },
+      { line: 4, checked: false, text: "new-open", depth: 0 },
+    ],
+  };
+  const openFirst = Model.visibleTodos(status, false, "", "openFirst");
+  assert.deepEqual([...openFirst.map((t) => t.line)], [4, 1, 3, 2]);
+});
+
 test("shiftDate", () => {
   assert.equal(Model.shiftDate("2026-08-20", -1), "2026-08-19");
   assert.equal(Model.shiftDate("2026-08-20", 1), "2026-08-21");
