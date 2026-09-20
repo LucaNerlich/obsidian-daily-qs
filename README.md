@@ -106,8 +106,8 @@ omarchy bar set luca.obsidian-daily archiveFolder 'dailies/_archive/YYYY'
     click its checkbox or press Enter/Space to toggle. Hover a truncated
     row to see the full text.
   - Sort order is file order by default, so new todos append to the bottom.
-    Cycle newest-first / uncompleted-first with the sort button next to
-    *Hide done*, or set `sortOrder` (`default`, `newest`, `openFirst`).
+    Cycle newest-first / uncompleted-first / alphabetical with the sort button next to
+    *Hide done*, or set `sortOrder` (`default`, `newest`, `openFirst`, `alphabetical`).
     Parent-child hierarchy is preserved in every order.
   - Nested todos render indented; Shift+Enter adds under the selected row.
   - New items go under the configured `insertHeading` (or `todoHeading` when

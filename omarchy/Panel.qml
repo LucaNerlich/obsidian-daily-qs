@@ -29,7 +29,8 @@ Panel {
   property string sortOrder: {
     if (!hasWatcher) return "default"
     var s = String(watcher.sortOrderSetting || "default")
-    return (s === "newest" || s === "openFirst" || s === "default") ? s : "default"
+    if (s === "alpha") return "alphabetical"
+    return (s === "newest" || s === "openFirst" || s === "alphabetical" || s === "default") ? s : "default"
   }
   property string searchText: ""
   property int selectedIndex: -1
@@ -697,17 +698,19 @@ Panel {
                 id: sortButton
                 Layout.alignment: Qt.AlignVCenter
                 Layout.topMargin: 4
-                iconText: root.sortOrder === "newest" ? "\u2193" : (root.sortOrder === "openFirst" ? "\u21C5" : "\u2191")
+                iconText: root.sortOrder === "newest" ? "\u2193" : (root.sortOrder === "openFirst" ? "\u21C5" : (root.sortOrder === "alphabetical" ? "A" : "\u2191"))
                 tooltipText: {
                   if (root.sortOrder === "newest") return "Sort: Newest first (click to cycle)"
                   if (root.sortOrder === "openFirst") return "Sort: Unchecked first (click to cycle)"
+                  if (root.sortOrder === "alphabetical") return "Sort: Alphabetical (click to cycle)"
                   return "Sort: File order (click to cycle)"
                 }
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 onClicked: {
                   if (root.sortOrder === "newest") root.sortOrder = "openFirst"
-                  else if (root.sortOrder === "openFirst") root.sortOrder = "default"
+                  else if (root.sortOrder === "openFirst") root.sortOrder = "alphabetical"
+                  else if (root.sortOrder === "alphabetical") root.sortOrder = "default"
                   else root.sortOrder = "newest"
                 }
               }
