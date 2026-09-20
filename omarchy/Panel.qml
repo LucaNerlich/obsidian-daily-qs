@@ -26,6 +26,7 @@ Panel {
   readonly property real todoHoverOverflow: Style.space(6)
 
   property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
+  property string sortOrder: hasWatcher ? (watcher.sortOrderSetting || "newest") : "newest"
   property string searchText: ""
   property int selectedIndex: -1
   property int editingLine: -1
@@ -65,7 +66,7 @@ Panel {
   })
   readonly property bool vaultSetupError: Model.isVaultSetupError(status)
   readonly property string metaText: Model.metaLine(status)
-  readonly property var shownTodos: Model.visibleTodos(status, root.openOnly, root.searchText)
+  readonly property var shownTodos: Model.visibleTodos(status, root.openOnly, root.searchText, root.sortOrder)
   readonly property string emptyText: Model.emptyMessage(status, root.openOnly, root.searchText)
   readonly property color iconColor: root.statusState === "error" ? root.urgent : root.foreground
   readonly property var selectedTodo: (selectedIndex >= 0 && selectedIndex < shownTodos.length)
@@ -291,8 +292,13 @@ Panel {
     if (root.pendingAppendCount > 0 && root.shownTodos.length > 0) {
       root.pendingAppendCount -= 1
       Qt.callLater(function() {
-        root.selectedIndex = root.shownTodos.length - 1
-        root.scrollSelectedIntoView()
+        if (root.sortOrder === "newest") {
+          root.selectedIndex = 0
+          if (panelFlick) panelFlick.contentY = 0
+        } else {
+          root.selectedIndex = root.shownTodos.length - 1
+          root.scrollSelectedIntoView()
+        }
       })
     }
   }
@@ -682,6 +688,25 @@ Panel {
                   verticalAlignment: Text.AlignVCenter
                 }
               }
+
+              PanelActionButton {
+                id: sortButton
+                Layout.alignment: Qt.AlignVCenter
+                Layout.topMargin: 4
+                iconText: root.sortOrder === "newest" ? "\u2193" : (root.sortOrder === "openFirst" ? "\u2713" : "\u2191")
+                tooltipText: {
+                  if (root.sortOrder === "newest") return "Sort: Newest first (click to cycle)"
+                  if (root.sortOrder === "openFirst") return "Sort: Unchecked first (click to cycle)"
+                  return "Sort: File order (click to cycle)"
+                }
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: {
+                  if (root.sortOrder === "newest") root.sortOrder = "openFirst"
+                  else if (root.sortOrder === "openFirst") root.sortOrder = "default"
+                  else root.sortOrder = "newest"
+                }
+              }
             }
           }
         }
@@ -739,7 +764,7 @@ Panel {
                     required property var modelData
                     required property int index
                     property int todoIndex: index
-                    property bool hovered: todoMouse.containsMouse
+                    property bool hovered: todoMouse.containsMouse || checkboxMouse.containsMouse
                     x: -root.todoHoverOverflow
                     width: todoColumn.width + root.todoHoverOverflow * 2
                     implicitHeight: todoInner.implicitHeight + Style.space(8)
@@ -765,13 +790,18 @@ Panel {
                           root.closeTodoMenu()
                           return
                         }
-                        root.toggleTodo(modelData.line, modelData.text)
                       }
                       onDoubleClicked: {
                         root.selectedIndex = index
                         root.closeTodoMenu()
                         root.startEdit(modelData)
                       }
+                    }
+
+                    PanelToolTip {
+                      visible: todoRow.hovered && root.editingLine !== modelData.line && modelData.text.length > 0
+                      text: modelData.text
+                      fontFamily: root.fontFamily
                     }
 
                     RowLayout {
@@ -784,28 +814,48 @@ Panel {
                       anchors.rightMargin: root.todoHoverOverflow + Style.space(8)
                       spacing: Style.space(10)
 
-                      BorderSurface {
+                      Item {
                         Layout.preferredWidth: Style.space(18)
                         Layout.preferredHeight: Style.space(18)
-                        Layout.alignment: Qt.AlignVCenter
-                        radius: Math.max(2, Style.cornerRadius * 0.45)
-                        color: modelData.checked
-                          ? Style.selectedFillFor(root.foreground, root.accent)
-                          : "transparent"
-                        borderSpec: Border.controlSpec(
-                          modelData.checked ? "selected" : "normal",
-                          root.foreground,
-                          root.accent)
+                        Layout.alignment: Qt.AlignTop
+                        Layout.topMargin: Style.space(2)
 
-                        Text {
-                          anchors.centerIn: parent
-                          visible: modelData.checked === true
-                          text: "\u2713"
-                          textFormat: Text.PlainText
-                          color: root.foreground
-                          font.family: root.fontFamily
-                          font.pixelSize: Style.font.caption
-                          font.bold: true
+                        BorderSurface {
+                          anchors.fill: parent
+                          radius: Math.max(2, Style.cornerRadius * 0.45)
+                          color: modelData.checked
+                            ? Style.selectedFillFor(root.foreground, root.accent)
+                            : "transparent"
+                          borderSpec: Border.controlSpec(
+                            modelData.checked ? "selected" : (checkboxMouse.containsMouse ? "hover" : "normal"),
+                            root.foreground,
+                            root.accent)
+
+                          Text {
+                            anchors.centerIn: parent
+                            visible: modelData.checked === true
+                            text: "\u2713"
+                            textFormat: Text.PlainText
+                            color: root.foreground
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                          }
+                        }
+
+                        MouseArea {
+                          id: checkboxMouse
+                          anchors.fill: parent
+                          anchors.margins: -Style.space(4)
+                          hoverEnabled: true
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: function(mouse) {
+                            root.selectedIndex = index
+                            if (root.todoMenuOpen) {
+                              root.closeTodoMenu()
+                            }
+                            root.toggleTodo(modelData.line, modelData.text)
+                          }
                         }
                       }
 
@@ -841,7 +891,6 @@ Panel {
                         font.pixelSize: Style.font.body
                         font.strikeout: modelData.checked === true
                         elide: Text.ElideRight
-                        wrapMode: Text.NoWrap
                       }
                     }
                   }

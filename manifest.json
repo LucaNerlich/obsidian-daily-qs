@@ -19,6 +19,7 @@
     "defaultSection": "right",
     "defaults": {
       "openOnly": false,
+      "sortOrder": "newest",
       "vaultPath": "",
       "todoHeading": "",
       "insertHeading": "",
@@ -67,6 +68,13 @@
         "label": "Hide when empty",
         "description": "Conceal the bar widget when there is no note or no todos for today.",
         "defaultValue": false
+      },
+      {
+        "key": "sortOrder",
+        "type": "string",
+        "label": "Sort order",
+        "description": "How todos are ordered in the panel: 'newest' (newest first / top), 'default' (file order), or 'openFirst' (uncompleted first).",
+        "defaultValue": "newest"
       }
     ]
   }

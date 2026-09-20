@@ -230,33 +230,85 @@ function isVaultSetupError(status) {
   return code === "missing_vault" || code === "bad_vault";
 }
 
-function visibleTodos(status, openOnly, query) {
+function sortTodos(items, sortOrder) {
+  if (!Array.isArray(items) || items.length <= 1) return items;
+  if (!sortOrder || sortOrder === "default" || sortOrder === "file") return items;
+
+  var topLevel = [];
+  var childrenMap = {};
+  var itemMap = {};
+
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    itemMap[it.line] = it;
+    childrenMap[it.line] = [];
+  }
+
+  for (var j = 0; j < items.length; j++) {
+    var item = items[j];
+    if (item.parentLine && itemMap[item.parentLine]) {
+      childrenMap[item.parentLine].push(item);
+    } else {
+      topLevel.push(item);
+    }
+  }
+
+  function compareTodos(a, b) {
+    if (sortOrder === "openFirst") {
+      if (a.checked !== b.checked) return a.checked ? 1 : -1;
+    }
+    return b.line - a.line;
+  }
+
+  topLevel.sort(compareTodos);
+
+  var result = [];
+  function appendNode(node) {
+    result.push(node);
+    var kids = childrenMap[node.line] || [];
+    kids.sort(compareTodos);
+    for (var k = 0; k < kids.length; k++) {
+      appendNode(kids[k]);
+    }
+  }
+
+  for (var t = 0; t < topLevel.length; t++) {
+    appendNode(topLevel[t]);
+  }
+
+  return result;
+}
+
+function visibleTodos(status, openOnly, query, sortOrder) {
   if (!status || !status.todos) return [];
 
   var todos = status.todos;
   var q = String(query || "").trim().toLowerCase();
-  if (!openOnly && q === "") return todos;
+  var filtered = todos;
+  if (openOnly || q !== "") {
+    var byLine = {};
+    for (var i = 0; i < todos.length; i++) byLine[todos[i].line] = todos[i];
 
-  var byLine = {};
-  for (var i = 0; i < todos.length; i++) byLine[todos[i].line] = todos[i];
-
-  var keep = {};
-  function keepChain(line) {
-    while (line && byLine[line]) {
-      if (keep[line] === true) return;
-      keep[line] = true;
-      line = byLine[line].parentLine;
+    var keep = {};
+    function keepChain(line) {
+      while (line && byLine[line]) {
+        if (keep[line] === true) return;
+        keep[line] = true;
+        line = byLine[line].parentLine;
+      }
     }
+
+    for (var j = 0; j < todos.length; j++) {
+      var todo = todos[j];
+      if (openOnly && todo.checked) continue;
+      if (q !== "" && todo.text.toLowerCase().indexOf(q) === -1) continue;
+      keepChain(todo.line);
+    }
+
+    filtered = todos.filter(function(t) { return keep[t.line] === true; });
   }
 
-  for (var j = 0; j < todos.length; j++) {
-    var todo = todos[j];
-    if (openOnly && todo.checked) continue;
-    if (q !== "" && todo.text.toLowerCase().indexOf(q) === -1) continue;
-    keepChain(todo.line);
-  }
-
-  return todos.filter(function(t) { return keep[t.line] === true; });
+  return sortTodos(filtered, sortOrder);
 }
 
 function shiftDate(dateStr, deltaDays) {

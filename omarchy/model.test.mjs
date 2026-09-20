@@ -219,6 +219,24 @@ test("visibleTodos combines search and openOnly", () => {
   assert.deepEqual(visible.map((t) => t.text), ["parent", "child alpha"]);
 });
 
+test("visibleTodos sortOrder", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: true, text: "first", depth: 0 },
+      { line: 2, checked: false, text: "second", depth: 0 },
+      { line: 3, checked: false, text: "third", depth: 0 },
+    ],
+  };
+  const newest = Model.visibleTodos(status, false, "", "newest");
+  assert.equal(JSON.stringify(newest.map(t => t.line)), JSON.stringify([3, 2, 1]));
+
+  const openFirst = Model.visibleTodos(status, false, "", "openFirst");
+  assert.equal(JSON.stringify(openFirst.map(t => t.line)), JSON.stringify([3, 2, 1]));
+
+  const def = Model.visibleTodos(status, false, "", "default");
+  assert.equal(JSON.stringify(def.map(t => t.line)), JSON.stringify([1, 2, 3]));
+});
+
 test("shiftDate", () => {
   assert.equal(Model.shiftDate("2026-08-20", -1), "2026-08-19");
   assert.equal(Model.shiftDate("2026-08-20", 1), "2026-08-21");
