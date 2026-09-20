@@ -100,7 +100,8 @@ BarWidget {
   readonly property bool openOnlyDefault: setting("openOnly", false) === true
   readonly property string sortOrderSetting: {
     var s = String(setting("sortOrder", "default") || "default")
-    return (s === "newest" || s === "openFirst" || s === "default") ? s : "default"
+    if (s === "alpha") return "alphabetical"
+    return (s === "newest" || s === "openFirst" || s === "alphabetical" || s === "default") ? s : "default"
   }
   readonly property bool hideWhenDone: setting("hideWhenDone", false) === true
   readonly property bool hideWhenEmpty: setting("hideWhenEmpty", false) === true

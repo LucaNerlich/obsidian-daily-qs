@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Alphabetical sort order: new `alphabetical` `sortOrder` value (A–Z,
+  case-insensitive, `alpha` also accepted). Top-level todos sort A–Z and each
+  child group sorts A–Z under its parent, preserving hierarchy like the other
+  orders. The in-panel sort button cycles through it as well.
+
 ## [1.10.0] - 2026-09-20
 
 ### Added

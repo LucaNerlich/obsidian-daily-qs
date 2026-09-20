@@ -254,6 +254,13 @@ function sortTodos(items, sortOrder) {
   }
 
   function compareTodos(a, b) {
+    if (sortOrder === "alpha" || sortOrder === "alphabetical") {
+      var at = String(a.text || "").toLowerCase();
+      var bt = String(b.text || "").toLowerCase();
+      if (at < bt) return -1;
+      if (at > bt) return 1;
+      return a.line - b.line;
+    }
     if (sortOrder === "openFirst") {
       if (a.checked !== b.checked) return a.checked ? 1 : -1;
     }
