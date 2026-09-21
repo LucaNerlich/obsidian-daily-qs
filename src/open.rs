@@ -35,21 +35,16 @@ fn hex(n: u8) -> char {
 
 /// Launch the URI via `xdg-open` (Omarchy / Wayland desktop).
 pub fn launch(uri: &str) -> Result<(), VaultError> {
-    let status = Command::new("xdg-open")
+    // Some desktop handlers keep xdg-open alive until the app closes. Do not
+    // hold up the frontend's action queue for the lifetime of Obsidian.
+    Command::new("xdg-open")
         .arg(uri)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
+        .spawn()
         .map_err(|e| VaultError::Io(format!("failed to spawn xdg-open: {e}")))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(VaultError::Io(format!(
-            "xdg-open exited with {}",
-            status.code().unwrap_or(-1)
-        )))
-    }
+    Ok(())
 }
 
 #[cfg(test)]
