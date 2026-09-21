@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-09-21
+
+### Fixed
+
+- Opening the daily note in Obsidian no longer blocks the widget: `xdg-open`
+  is spawned and not waited on, so desktop handlers that keep `xdg-open`
+  alive for Obsidian's lifetime can no longer stall task refreshes (and
+  other actions) while Obsidian is open.
+
 ## [1.11.0] - 2026-09-20
 
 ### Added
