@@ -11,6 +11,33 @@ cargo test --all-targets
 node omarchy/model.test.mjs
 ```
 
+## Todo text privacy — never put vault todo text on argv
+
+Private Obsidian vault content must not appear in process arguments. On systems
+without `hidepid`, any local user can read `/proc/<pid>/cmdline`. Marketplace
+review (#7777) blocked verification for this.
+
+**Widget / Quattro `Process` invocations (required):**
+
+- When passing todo text or expected text (`text`, `expectText`), use `--stdin`
+  and send a JSON payload on stdin after the process starts
+  (`Process.stdinEnabled = true`, then `write(...)`, then close stdin).
+- Do **not** pass `--text` or `--expect-text` on the command line from
+  `omarchy/BarWidget.qml` (or any other widget/process launcher).
+- Payload shape: `{"text":"..."}` for add; `{"text":"...","expectText":"..."}`
+  for edit; `{"expectText":"..."}` for toggle/delete/defer/indent/outdent when
+  an expect check is needed.
+- Keep non-sensitive flags (`--date`, `--line`, `--heading`, `--vault`, etc.)
+  on argv as usual.
+
+**Interactive CLI (allowed):** `obsidian-daily-qs add --text "..."` and
+`--expect-text` remain for humans typing at a shell. Prefer `--stdin` in
+scripts or anything that might show up in process listings shared with other
+local users.
+
+If you add a new mutation that takes todo contents, wire the widget through
+`--stdin` from day one — do not reintroduce argv text fields in QML.
+
 ## Bundle rule — READ THIS, it breaks every release otherwise
 
 Any edit under `src/`, `Cargo.toml`, `Cargo.lock`, or `rust-toolchain.toml` requires a fresh `omarchy/bin/` bundle in the same change (`make verify-bundle` is the CI/release gate).
