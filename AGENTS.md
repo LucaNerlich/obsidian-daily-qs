@@ -25,11 +25,12 @@ Correct flow for any Rust change:
    VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh x86_64-unknown-linux-musl  # full rebuild check also OK on x86_64
    ```
    Do NOT commit `omarchy/bin/obsidian-daily-qs-aarch64*` from this host.
-2. Get the native binaries from CI (per-arch native runners, uploads ELFs + hashes + srcid, does not push):
-   ```bash
-   gh workflow run "Refresh marketplace bundle" --ref <branch>
-   gh run download <run-id> --dir /tmp/opencode/refresh-bundle
-   ```
+2. Get the native binaries from CI (per-arch native runners, uploads ELFs + hashes + srcid, does not push). On a PR that touches Rust, the workflow runs automatically; otherwise dispatch it:
+ ```bash
+ gh workflow run "Refresh marketplace bundle" --ref <branch>   # optional if a PR already triggered it
+ gh run list --workflow=refresh-bundle.yml --branch <branch> --limit 1
+ gh run download <run-id> --dir /tmp/opencode/refresh-bundle
+ ```
 3. Copy into place (`aarch64` from the ARM artifact, `x86_64` either — they must agree on `.srcid`):
    ```bash
    cp /tmp/opencode/refresh-bundle/omarchy-bin-aarch64-unknown-linux-musl/obsidian-daily-qs-aarch64 omarchy/bin/

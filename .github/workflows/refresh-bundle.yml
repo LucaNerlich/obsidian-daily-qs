@@ -2,8 +2,21 @@ name: Refresh marketplace bundle
 
 # Builds omarchy/bin on native runners and uploads the ELFs + hashes + srcid as
 # an artifact for commit. Does not push.
+#
+# Also runs on pull requests that touch Rust sources so reviewers / agents
+# without workflow_dispatch can download a native aarch64 ELF (cross-builds
+# from x86_64 are not byte-identical to ubuntu-24.04-arm).
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/build-bundle.sh"
+      - "scripts/bundle-source-id.sh"
+      - ".github/workflows/refresh-bundle.yml"
 
 concurrency:
   group: refresh-bundle-${{ github.ref }}
