@@ -1,10 +1,11 @@
 //! Omarchy Quattro backend for Obsidian daily note todos.
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use chrono::{Local, NaiveDate};
 use clap::{Parser, Subcommand};
+use serde::Deserialize;
 
 use obsidian_daily_qs::config::Vault;
 use obsidian_daily_qs::status::{Snapshot, WeekSummary};
@@ -54,8 +55,12 @@ enum Command {
     },
     /// Add an open checkbox todo
     Add {
+        /// Todo text (visible in process arguments; prefer --stdin from the widget)
+        #[arg(long, conflicts_with = "stdin")]
+        text: Option<String>,
+        /// Read `{"text":"..."}` from stdin instead of --text
         #[arg(long)]
-        text: String,
+        stdin: bool,
         #[arg(long)]
         date: Option<String>,
         /// Nest under this 1-based todo line
@@ -70,8 +75,11 @@ enum Command {
     Toggle {
         #[arg(long)]
         line: usize,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
+        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
+        #[arg(long)]
+        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -79,10 +87,14 @@ enum Command {
     Edit {
         #[arg(long)]
         line: usize,
-        #[arg(long)]
-        text: String,
-        #[arg(long)]
+        /// New todo text (visible in process arguments; prefer --stdin)
+        #[arg(long, conflicts_with = "stdin")]
+        text: Option<String>,
+        #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
+        /// Read `{"text":"...","expectText":"..."}` from stdin
+        #[arg(long)]
+        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -90,8 +102,11 @@ enum Command {
     Delete {
         #[arg(long)]
         line: usize,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
+        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
+        #[arg(long)]
+        stdin: bool,
         #[arg(long, default_value_t = false)]
         with_children: bool,
         #[arg(long)]
@@ -101,8 +116,11 @@ enum Command {
     Defer {
         #[arg(long)]
         line: usize,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
+        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
+        #[arg(long)]
+        stdin: bool,
         #[arg(long, default_value_t = false)]
         with_children: bool,
         #[arg(long)]
@@ -115,8 +133,11 @@ enum Command {
     Indent {
         #[arg(long)]
         line: usize,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
+        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
+        #[arg(long)]
+        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -124,8 +145,11 @@ enum Command {
     Outdent {
         #[arg(long)]
         line: usize,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
+        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
+        #[arg(long)]
+        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -151,6 +175,16 @@ enum Command {
     },
 }
 
+/// Sensitive fields the widget sends on stdin so they never appear in argv.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StdinFields {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    expect_text: Option<String>,
+}
+
 fn main() {
     let cli = Cli::parse();
     let vault_arg = cli.vault.clone();
@@ -167,88 +201,116 @@ fn main() {
         }
         Command::Add {
             text,
+            stdin,
             date,
             under_line,
             heading,
-        } => emit(run(
-            vault_arg,
-            archive_arg,
-            |vault, d| add_todo_under(vault, d, &text, under_line, heading.as_deref()),
-            date,
-        )),
+        } => emit(match resolve_text(text, stdin) {
+            Ok(text) => run(
+                vault_arg,
+                archive_arg,
+                |vault, d| add_todo_under(vault, d, &text, under_line, heading.as_deref()),
+                date,
+            ),
+            Err(err) => Snapshot::error_with_code(err, "io"),
+        }),
         Command::Toggle {
             line,
             expect_text,
+            stdin,
             date,
-        } => emit(run(
-            vault_arg,
-            archive_arg,
-            |vault, d| toggle_todo(vault, d, line, expect_text.as_deref()),
-            date,
-        )),
+        } => emit(match resolve_expect_text(expect_text, stdin) {
+            Ok(expect_text) => run(
+                vault_arg,
+                archive_arg,
+                |vault, d| toggle_todo(vault, d, line, expect_text.as_deref()),
+                date,
+            ),
+            Err(err) => Snapshot::error_with_code(err, "io"),
+        }),
         Command::Edit {
             line,
             text,
             expect_text,
+            stdin,
             date,
-        } => emit(run(
-            vault_arg,
-            archive_arg,
-            |vault, d| edit_todo(vault, d, line, expect_text.as_deref(), &text),
-            date,
-        )),
+        } => emit(match resolve_edit_fields(text, expect_text, stdin) {
+            Ok((text, expect_text)) => run(
+                vault_arg,
+                archive_arg,
+                |vault, d| edit_todo(vault, d, line, expect_text.as_deref(), &text),
+                date,
+            ),
+            Err(err) => Snapshot::error_with_code(err, "io"),
+        }),
         Command::Delete {
             line,
             expect_text,
+            stdin,
             with_children,
             date,
-        } => emit(run(
-            vault_arg,
-            archive_arg,
-            |vault, d| delete_todo(vault, d, line, expect_text.as_deref(), with_children),
-            date,
-        )),
+        } => emit(match resolve_expect_text(expect_text, stdin) {
+            Ok(expect_text) => run(
+                vault_arg,
+                archive_arg,
+                |vault, d| delete_todo(vault, d, line, expect_text.as_deref(), with_children),
+                date,
+            ),
+            Err(err) => Snapshot::error_with_code(err, "io"),
+        }),
         Command::Defer {
             line,
             expect_text,
+            stdin,
             with_children,
             date,
             heading,
-        } => emit(run(
-            vault_arg,
-            archive_arg,
-            |vault, d| {
-                defer_todo(
-                    vault,
-                    d,
-                    line,
-                    expect_text.as_deref(),
-                    with_children,
-                    heading.as_deref(),
-                )
-            },
-            date,
-        )),
+        } => emit(match resolve_expect_text(expect_text, stdin) {
+            Ok(expect_text) => run(
+                vault_arg,
+                archive_arg,
+                |vault, d| {
+                    defer_todo(
+                        vault,
+                        d,
+                        line,
+                        expect_text.as_deref(),
+                        with_children,
+                        heading.as_deref(),
+                    )
+                },
+                date,
+            ),
+            Err(err) => Snapshot::error_with_code(err, "io"),
+        }),
         Command::Indent {
             line,
             expect_text,
+            stdin,
             date,
-        } => emit(run(
-            vault_arg,
-            archive_arg,
-            |vault, d| set_indent(vault, d, line, expect_text.as_deref(), 1),
-            date,
-        )),
+        } => emit(match resolve_expect_text(expect_text, stdin) {
+            Ok(expect_text) => run(
+                vault_arg,
+                archive_arg,
+                |vault, d| set_indent(vault, d, line, expect_text.as_deref(), 1),
+                date,
+            ),
+            Err(err) => Snapshot::error_with_code(err, "io"),
+        }),
         Command::Outdent {
             line,
             expect_text,
+            stdin,
             date,
-        } => emit(run(
-            vault_arg,
-            archive_arg,
-            |vault, d| set_indent(vault, d, line, expect_text.as_deref(), -1),
-            date,
-        )),
+        } => emit(match resolve_expect_text(expect_text, stdin) {
+            Ok(expect_text) => run(
+                vault_arg,
+                archive_arg,
+                |vault, d| set_indent(vault, d, line, expect_text.as_deref(), -1),
+                date,
+            ),
+            Err(err) => Snapshot::error_with_code(err, "io"),
+        }),
         Command::Undo => emit(match Vault::resolve(vault_arg, archive_arg) {
             Ok(vault) => match undo_last(&vault) {
                 Ok(snap) => snap,
@@ -277,6 +339,67 @@ fn main() {
         )),
         Command::Open { date } => emit(run(vault_arg, archive_arg, open_in_obsidian, date)),
     }
+}
+
+fn read_stdin_fields() -> Result<StdinFields, String> {
+    let mut buf = String::new();
+    io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|err| format!("failed to read stdin: {err}"))?;
+    let trimmed = buf.trim();
+    if trimmed.is_empty() {
+        return Err("expected JSON fields on stdin".into());
+    }
+    serde_json::from_str(trimmed).map_err(|err| format!("invalid stdin JSON: {err}"))
+}
+
+fn resolve_text(text: Option<String>, stdin: bool) -> Result<String, String> {
+    if stdin {
+        let fields = read_stdin_fields()?;
+        return non_empty_field(fields.text, "text");
+    }
+    non_empty_field(text, "--text")
+}
+
+fn resolve_expect_text(expect_text: Option<String>, stdin: bool) -> Result<Option<String>, String> {
+    if !stdin {
+        return Ok(empty_to_none(expect_text));
+    }
+    let fields = read_stdin_fields()?;
+    Ok(empty_to_none(fields.expect_text))
+}
+
+fn resolve_edit_fields(
+    text: Option<String>,
+    expect_text: Option<String>,
+    stdin: bool,
+) -> Result<(String, Option<String>), String> {
+    if stdin {
+        let fields = read_stdin_fields()?;
+        return Ok((
+            non_empty_field(fields.text, "text")?,
+            empty_to_none(fields.expect_text),
+        ));
+    }
+    Ok((non_empty_field(text, "--text")?, empty_to_none(expect_text)))
+}
+
+fn non_empty_field(value: Option<String>, name: &str) -> Result<String, String> {
+    match value.map(|s| s.trim().to_string()) {
+        Some(s) if !s.is_empty() => Ok(s),
+        _ => Err(format!("missing {name}")),
+    }
+}
+
+fn empty_to_none(value: Option<String>) -> Option<String> {
+    value.and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 fn run<F>(

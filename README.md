@@ -152,8 +152,11 @@ obsidian-daily-qs watch
 obsidian-daily-qs add --text "Ship plugin"
 obsidian-daily-qs add --text "Inbox item" --heading Inbox
 obsidian-daily-qs add --text "Nested" --under-line 12
+# Widget path: pass sensitive fields on stdin so they never appear in argv
+printf '%s' '{"text":"Ship plugin"}' | obsidian-daily-qs add --stdin
 obsidian-daily-qs toggle --line 12
 obsidian-daily-qs edit --line 12 --text "Renamed" --expect-text "Old"
+printf '%s' '{"text":"Renamed","expectText":"Old"}' | obsidian-daily-qs edit --line 12 --stdin
 obsidian-daily-qs delete --line 12
 obsidian-daily-qs defer --line 12
 obsidian-daily-qs defer --line 12 --heading Inbox

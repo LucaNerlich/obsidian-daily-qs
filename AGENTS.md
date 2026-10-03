@@ -11,6 +11,39 @@ cargo test --all-targets
 node omarchy/model.test.mjs
 ```
 
+## Argv privacy — never put sensitive values on process arguments
+
+Anything private or sensitive must not appear in process argv. On systems
+without `hidepid`, other local users can read `/proc/<pid>/cmdline`. That
+includes vault contents, secrets, tokens, paths that encode private data, and
+similar payloads — not only todo text. Marketplace review (#7777) blocked
+verification when todo text was passed on the command line.
+
+**Widget / Quattro `Process` invocations (required):**
+
+- Pass sensitive values through a non-argv channel: stdin (preferred here), or
+  another private transport that does not show up in `/proc/<pid>/cmdline`
+  (and preferably not in `/proc/<pid>/environ` either).
+- Keep non-sensitive flags (`--date`, `--line`, `--heading`, `--vault`, etc.)
+  on argv as usual.
+- When you add a new Process launch or CLI flag that carries private data,
+  wire the widget through stdin (or equivalent) from day one — do not put
+  that data on the command line in QML.
+
+**Concrete pattern in this repo (todo text, #7777):**
+
+- Mutations that take todo text / expected text use `--stdin` and a JSON
+  body written after start (`Process.stdinEnabled = true`, then `write(...)`,
+  then close stdin). Do **not** pass `--text` or `--expect-text` from
+  `omarchy/BarWidget.qml`.
+- Payload shape: `{"text":"..."}` for add; `{"text":"...","expectText":"..."}`
+  for edit; `{"expectText":"..."}` for toggle/delete/defer/indent/outdent when
+  an expect check is needed.
+
+**Interactive CLI (allowed):** humans may pass `--text` / `--expect-text` (and
+similar) at a shell. Prefer `--stdin` in scripts or anything that might appear
+in process listings shared with other local users.
+
 ## Bundle rule — READ THIS, it breaks every release otherwise
 
 Any edit under `src/`, `Cargo.toml`, `Cargo.lock`, or `rust-toolchain.toml` requires a fresh `omarchy/bin/` bundle in the same change (`make verify-bundle` is the CI/release gate).
@@ -25,11 +58,12 @@ Correct flow for any Rust change:
    VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh x86_64-unknown-linux-musl  # full rebuild check also OK on x86_64
    ```
    Do NOT commit `omarchy/bin/obsidian-daily-qs-aarch64*` from this host.
-2. Get the native binaries from CI (per-arch native runners, uploads ELFs + hashes + srcid, does not push):
-   ```bash
-   gh workflow run "Refresh marketplace bundle" --ref <branch>
-   gh run download <run-id> --dir /tmp/opencode/refresh-bundle
-   ```
+2. Get the native binaries from CI (per-arch native runners, uploads ELFs + hashes + srcid, does not push). On a PR that touches Rust, the workflow runs automatically; otherwise dispatch it:
+ ```bash
+ gh workflow run "Refresh marketplace bundle" --ref <branch>   # optional if a PR already triggered it
+ gh run list --workflow=refresh-bundle.yml --branch <branch> --limit 1
+ gh run download <run-id> --dir /tmp/opencode/refresh-bundle
+ ```
 3. Copy into place (`aarch64` from the ARM artifact, `x86_64` either — they must agree on `.srcid`):
    ```bash
    cp /tmp/opencode/refresh-bundle/omarchy-bin-aarch64-unknown-linux-musl/obsidian-daily-qs-aarch64 omarchy/bin/

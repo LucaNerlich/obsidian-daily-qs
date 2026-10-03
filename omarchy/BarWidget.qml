@@ -39,6 +39,9 @@ BarWidget {
   readonly property bool watchBinaryExhausted: watchBundledFailed && watchFallbackFailed
   readonly property bool actionBinaryExhausted: actionBundledFailed && actionFallbackFailed
   property var pendingActionArgs: []
+  // JSON payload written to the action process stdin after start so todo
+  // text never appears in process arguments (/proc/<pid>/cmdline).
+  property string pendingActionStdin: ""
 
   readonly property string watchBinary: {
     if (!root.archSupported) return ""
@@ -236,16 +239,20 @@ BarWidget {
     root.applyViewParsed(parsed)
   }
 
-  function runAction(args) {
+  function runAction(args, stdinPayload) {
     if (!args || !args.length) return
+    var stdin = typeof stdinPayload === "string" ? stdinPayload : ""
     if (actionProc.running) {
-      root.actionQueue.push(args)
+      root.actionQueue.push({ args: args, stdin: stdin })
       return
     }
     var full = root.withVault(args)
     root.pendingActionArgs = full
+    root.pendingActionStdin = stdin
     actionProc.retried = false
     actionProc.lastError = ""
+    // stdinEnabled must be true before start; write() is a no-op otherwise.
+    actionProc.stdinEnabled = true
     actionProc.command = [root.actionBinary].concat(full)
     actionProc.running = true
   }
@@ -253,7 +260,15 @@ BarWidget {
   function drainActionQueue() {
     if (actionProc.running) return
     if (root.actionQueue.length === 0) return
-    runAction(root.actionQueue.shift())
+    var next = root.actionQueue.shift()
+    if (next && next.args)
+      runAction(next.args, next.stdin || "")
+    else
+      runAction(next)
+  }
+
+  function secretFieldsPayload(fields) {
+    return JSON.stringify(fields || {})
   }
 
   function refreshView() {
@@ -292,11 +307,11 @@ BarWidget {
     var trimmed = String(text || "").trim()
     if (trimmed === "") return
     var d = root.viewDate || Model.todayIso()
-    var args = ["add", "--date", d, "--text", trimmed].concat(root.insertHeadingArgs())
+    var args = ["add", "--date", d, "--stdin"].concat(root.insertHeadingArgs())
     var n = Number(underLine)
     if (isFinite(n) && n >= 1)
       args.push("--under-line", String(Math.floor(n)))
-    root.runAction(args)
+    root.runAction(args, root.secretFieldsPayload({ text: trimmed }))
   }
 
   function toggleTodo(line, text) {
@@ -304,9 +319,12 @@ BarWidget {
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
     var args = ["toggle", "--date", d, "--line", String(Math.floor(n))]
-    if (typeof text === "string" && text !== "")
-      args.push("--expect-text", text)
-    root.runAction(args)
+    var stdin = ""
+    if (typeof text === "string" && text !== "") {
+      args.push("--stdin")
+      stdin = root.secretFieldsPayload({ expectText: text })
+    }
+    root.runAction(args, stdin)
   }
 
   function editTodo(line, expectText, newText) {
@@ -315,10 +333,11 @@ BarWidget {
     var trimmed = String(newText || "").trim()
     if (trimmed === "") return
     var d = root.viewDate || Model.todayIso()
-    var args = ["edit", "--date", d, "--line", String(Math.floor(n)), "--text", trimmed]
+    var args = ["edit", "--date", d, "--line", String(Math.floor(n)), "--stdin"]
+    var fields = { text: trimmed }
     if (typeof expectText === "string" && expectText !== "")
-      args.push("--expect-text", expectText)
-    root.runAction(args)
+      fields.expectText = expectText
+    root.runAction(args, root.secretFieldsPayload(fields))
   }
 
   function deleteTodo(line, text, withChildren) {
@@ -326,11 +345,14 @@ BarWidget {
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
     var args = ["delete", "--date", d, "--line", String(Math.floor(n))]
-    if (typeof text === "string" && text !== "")
-      args.push("--expect-text", text)
+    var stdin = ""
+    if (typeof text === "string" && text !== "") {
+      args.push("--stdin")
+      stdin = root.secretFieldsPayload({ expectText: text })
+    }
     if (withChildren === true)
       args.push("--with-children")
-    root.runAction(args)
+    root.runAction(args, stdin)
   }
 
   function deferTodo(line, text, withChildren) {
@@ -338,11 +360,14 @@ BarWidget {
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
     var args = ["defer", "--date", d, "--line", String(Math.floor(n))].concat(root.insertHeadingArgs())
-    if (typeof text === "string" && text !== "")
-      args.push("--expect-text", text)
+    var stdin = ""
+    if (typeof text === "string" && text !== "") {
+      args.push("--stdin")
+      stdin = root.secretFieldsPayload({ expectText: text })
+    }
     if (withChildren === true)
       args.push("--with-children")
-    root.runAction(args)
+    root.runAction(args, stdin)
   }
 
   function indentTodo(line, text, delta) {
@@ -351,9 +376,12 @@ BarWidget {
     var d = root.viewDate || Model.todayIso()
     var cmd = Number(delta) < 0 ? "outdent" : "indent"
     var args = [cmd, "--date", d, "--line", String(Math.floor(n))]
-    if (typeof text === "string" && text !== "")
-      args.push("--expect-text", text)
-    root.runAction(args)
+    var stdin = ""
+    if (typeof text === "string" && text !== "") {
+      args.push("--stdin")
+      stdin = root.secretFieldsPayload({ expectText: text })
+    }
+    root.runAction(args, stdin)
   }
 
   function undoLast() {
@@ -527,6 +555,7 @@ BarWidget {
     property bool startedOnce: false
     property bool retried: false
     property string lastError: ""
+    stdinEnabled: true
     stdout: SplitParser {
       onRead: function(line) {
         // Week summaries are handled by weekProc; ignore non-snapshot lines.
@@ -546,6 +575,11 @@ BarWidget {
     onStarted: {
       actionProc.startedOnce = true
       actionProc.lastError = ""
+      // Deliver private fields after start, then close stdin so the backend
+      // sees EOF. stdinEnabled must be re-enabled before the next launch.
+      if (root.pendingActionStdin !== "")
+        actionProc.write(root.pendingActionStdin)
+      actionProc.stdinEnabled = false
     }
     onRunningChanged: {
       if (actionProc.running) return
@@ -554,6 +588,7 @@ BarWidget {
       if (!failedStart || root.pendingActionArgs.length === 0) {
         actionProc.lastError = ""
         root.pendingActionArgs = []
+        root.pendingActionStdin = ""
         root.drainActionQueue()
         return
       }
@@ -573,6 +608,7 @@ BarWidget {
           ? "Backend cannot run on this architecture (" + root.hostArch + ")"
           : "Backend failed to start"
         root.pendingActionArgs = []
+        root.pendingActionStdin = ""
         root.drainActionQueue()
         return
       }
@@ -580,10 +616,12 @@ BarWidget {
       if (actionProc.retried) {
         actionProc.retried = false
         root.pendingActionArgs = []
+        root.pendingActionStdin = ""
         root.drainActionQueue()
         return
       }
       actionProc.retried = true
+      actionProc.stdinEnabled = true
       actionProc.command = [root.actionBinary].concat(root.pendingActionArgs)
       actionProc.running = true
     }
