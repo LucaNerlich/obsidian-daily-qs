@@ -1469,6 +1469,19 @@ fn temp_path_for(target: &Path) -> PathBuf {
     target.with_file_name(name)
 }
 
+/// Mode for the sibling temp file used by [`write_atomic`].
+///
+/// Must match an existing note (so a 0600 vault file is never briefly
+/// recreated world-readable under umask 022) and default to owner-only for
+/// new notes. Applied at `open` time — before any content is written.
+#[cfg(unix)]
+fn atomic_temp_mode(target: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(target)
+        .map(|m| m.permissions().mode() & 0o777)
+        .unwrap_or(0o600)
+}
+
 fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), VaultError> {
     let target = resolve_note_target(vault_root, path)?;
     let tmp = temp_path_for(&target);
@@ -1477,6 +1490,20 @@ fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), Vau
         // symlink — already sits at the temp path, so a pre-created link
         // cannot redirect this write. The parent was canonicalized above, so
         // the temp file cannot escape through a symlinked directory either.
+        //
+        // On Unix, set the create mode before writing so vault content is
+        // never briefly readable under a looser umask default (#7777).
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(atomic_temp_mode(&target))
+                .open(&tmp)
+                .map_err(|e| VaultError::Io(format!("failed to create {}: {e}", tmp.display())))?
+        };
+        #[cfg(not(unix))]
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1493,9 +1520,8 @@ fn write_atomic(vault_root: &Path, path: &Path, content: &str) -> Result<(), Vau
         let _ = fs::remove_file(&tmp);
         return Err(err);
     }
-    // Preserve the existing note's permissions across the atomic replace;
-    // the temp file would otherwise carry umask defaults (a 0600 note would
-    // become world-readable).
+    // Re-apply the existing note's permissions after create (umask can clear
+    // bits from OpenOptions::mode). New notes keep the owner-only create mode.
     #[cfg(unix)]
     if let Ok(meta) = fs::metadata(&target) {
         let _ = fs::set_permissions(&tmp, meta.permissions());
@@ -2372,6 +2398,44 @@ mod tests {
         let mode = fs::metadata(&note).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_temp_mode_matches_existing_note_or_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let (vault, _date, note) = vault_with("- [ ] open\n");
+        fs::set_permissions(&note, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(atomic_temp_mode(&note), 0o600);
+        fs::set_permissions(&note, fs::Permissions::from_mode(0o640)).unwrap();
+        assert_eq!(atomic_temp_mode(&note), 0o640);
+        let missing = vault.root().join("Daily/does-not-exist-yet.md");
+        assert_eq!(atomic_temp_mode(&missing), 0o600);
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_creates_new_notes_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = unique_temp("new-mode");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"YYYY-MM-DD"}"#,
+        )
+        .unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        add_todo(&vault, date, "brand new", None).unwrap();
+        let note = root.join("Daily/2026-08-20.md");
+        let mode = fs::metadata(&note).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[cfg(unix)]

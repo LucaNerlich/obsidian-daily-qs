@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Atomic note writes create the sibling temp file with the existing note's
+  mode (or owner-only `0600` for new notes) before writing content, so a
+  private `0600` note is never briefly world-readable under a typical umask
+  while the temp exists (#7777).
+
 ## [1.12.1] - 2026-10-03
 
 ### Fixed
