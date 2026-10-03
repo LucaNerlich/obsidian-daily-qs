@@ -11,32 +11,38 @@ cargo test --all-targets
 node omarchy/model.test.mjs
 ```
 
-## Todo text privacy — never put vault todo text on argv
+## Argv privacy — never put sensitive values on process arguments
 
-Private Obsidian vault content must not appear in process arguments. On systems
-without `hidepid`, any local user can read `/proc/<pid>/cmdline`. Marketplace
-review (#7777) blocked verification for this.
+Anything private or sensitive must not appear in process argv. On systems
+without `hidepid`, other local users can read `/proc/<pid>/cmdline`. That
+includes vault contents, secrets, tokens, paths that encode private data, and
+similar payloads — not only todo text. Marketplace review (#7777) blocked
+verification when todo text was passed on the command line.
 
 **Widget / Quattro `Process` invocations (required):**
 
-- When passing todo text or expected text (`text`, `expectText`), use `--stdin`
-  and send a JSON payload on stdin after the process starts
-  (`Process.stdinEnabled = true`, then `write(...)`, then close stdin).
-- Do **not** pass `--text` or `--expect-text` on the command line from
-  `omarchy/BarWidget.qml` (or any other widget/process launcher).
+- Pass sensitive values through a non-argv channel: stdin (preferred here), or
+  another private transport that does not show up in `/proc/<pid>/cmdline`
+  (and preferably not in `/proc/<pid>/environ` either).
+- Keep non-sensitive flags (`--date`, `--line`, `--heading`, `--vault`, etc.)
+  on argv as usual.
+- When you add a new Process launch or CLI flag that carries private data,
+  wire the widget through stdin (or equivalent) from day one — do not put
+  that data on the command line in QML.
+
+**Concrete pattern in this repo (todo text, #7777):**
+
+- Mutations that take todo text / expected text use `--stdin` and a JSON
+  body written after start (`Process.stdinEnabled = true`, then `write(...)`,
+  then close stdin). Do **not** pass `--text` or `--expect-text` from
+  `omarchy/BarWidget.qml`.
 - Payload shape: `{"text":"..."}` for add; `{"text":"...","expectText":"..."}`
   for edit; `{"expectText":"..."}` for toggle/delete/defer/indent/outdent when
   an expect check is needed.
-- Keep non-sensitive flags (`--date`, `--line`, `--heading`, `--vault`, etc.)
-  on argv as usual.
 
-**Interactive CLI (allowed):** `obsidian-daily-qs add --text "..."` and
-`--expect-text` remain for humans typing at a shell. Prefer `--stdin` in
-scripts or anything that might show up in process listings shared with other
-local users.
-
-If you add a new mutation that takes todo contents, wire the widget through
-`--stdin` from day one — do not reintroduce argv text fields in QML.
+**Interactive CLI (allowed):** humans may pass `--text` / `--expect-text` (and
+similar) at a shell. Prefer `--stdin` in scripts or anything that might appear
+in process listings shared with other local users.
 
 ## Bundle rule — READ THIS, it breaks every release otherwise
 
