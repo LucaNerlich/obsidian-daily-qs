@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.13.0] - 2026-10-15
+
+### Added
+
+- The `archiveFolder` setting is declared in the plugin manifest (default and
+  schema), so the settings UI shows a field for it instead of requiring
+  `omarchy bar set luca.obsidian-daily archiveFolder …`. It is deliberately a
+  text input: the value is a vault-relative moment pattern
+  (`dailies/_archive/YYYY`), not a filesystem path (#57).
 
 ### Fixed
 
@@ -26,6 +34,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `watch` still exits 0 (its restart heuristic watches the process, not the
   status), and a reader that closes the pipe early (`status | head`) is not
   treated as a failure.
+- Carry-over now records one undo for both notes: both bodies are read before
+  anything is written, and after both writes succeed a single record covers
+  the pair, so one Undo restores the previous note's todos and removes the
+  carried ones from the target instead of leaving them in neither (#45).
+- The carry-over crash-recovery reconcile no longer deletes source todos that
+  merely share their text with a todo the target note already has: removals
+  are bounded per text by what the target can account for, so a text
+  collision can no longer swallow lines that were never moved (#52).
+- Fenced code blocks are skipped by the read path, the heading filter, the
+  insertion fallback and the compactor, so a checkbox inside a code sample is
+  no longer listed, counted or acted on, and a new todo is never written
+  inside a fence (#50).
+- The read filter and the insert path now share one heading matcher, so a
+  todo inserted under `  ## Tasks` or `# Tasks #` is displayed under the same
+  heading that `add` targeted instead of disappearing from the view (#51).
+- Daily-note formats whose last segment looks like a file extension
+  (`DD.MM.YYYY`) get the `.md` suffix too, so the widget reads, edits and
+  opens the real note instead of an extension-less stray file (#46).
+- Opening today's note in Obsidian passes the vault-relative
+  `obsidian://open?vault=…&file=…` URI to `xdg-open`; the absolute `path=…`
+  form, which exposed the local vault path in that process's argv, is now
+  only a fallback (#47).
+- The undo file is written only into an owner-only (`0700`) cache directory,
+  and a missing `HOME`/`XDG_CACHE_HOME` is a clear error instead of a
+  fallback into world-writable `/tmp`, where another local user could
+  pre-plant the path as a symlink (#65).
+- A deliberate watch restart — a settings change right after the shell loads
+  — no longer marks the bundled binary as broken or flashes an error, and
+  restart state changes apply without the 5 s detour (#48, #55).
+- A failed add clears the optimistic append counter, so the next unrelated
+  change no longer jumps the selection and scroll to the bottom (or top) of
+  the list (#56).
+- Error text containing `&`, `<` or `>` is shown as-is instead of blanked, so
+  a vault or template path with those characters no longer hides the real
+  error behind a generic message (#58).
+- Unknown keys in the stdin JSON are rejected with an `invalid stdin JSON`
+  error instead of being ignored, so a mistyped `expectText` cannot silently
+  skip the stale-view guard (#53).
 
 ## [1.12.2] - 2026-10-03
 
