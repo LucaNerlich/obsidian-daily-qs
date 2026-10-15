@@ -308,16 +308,13 @@ Panel {
     }
   }
 
-  // An optimistic add is only ever consumed by the todos list changing. A
-  // failed add does not change the list, so without this the counter stays
-  // armed and the next *unrelated* todos change consumes it: the selection and
-  // scroll jump to a row the user never added, and Enter then toggles it.
-  onStatusStateChanged: {
-    if (root.statusState !== "ok") root.pendingAppendCount = 0
-  }
-  onErrorChanged: {
-    if (root.error !== "") root.pendingAppendCount = 0
-  }
+  // A failed mutation can repeat the identical `statusState`/`error` values
+  // (a deterministic OS error on a stable path), and QML only emits a change
+  // signal when a value actually differs — so watching those two left the
+  // optimistic counter armed. `viewFailureSeq` is monotonic: it changes on
+  // every failure, so this handler always runs.
+  readonly property int viewFailureSeq: hasWatcher ? Number(watcher.viewFailureSeq || 0) : 0
+  onViewFailureSeqChanged: root.pendingAppendCount = 0
 
   onDateChanged: {
     root.selectedIndex = -1

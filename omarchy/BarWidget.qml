@@ -92,6 +92,11 @@ BarWidget {
   property bool viewIsToday: true
   property string viewTemplateName: ""
   property bool viewCreatedFromTemplate: false
+  // Bumped on every failed action response. A failure can repeat the identical
+  // `viewStatusState`/`viewError` values, which emits no change signal, so the
+  // panel cannot detect it by watching those; this counter is monotonic, so its
+  // change handler always fires.
+  property int viewFailureSeq: 0
   property var weekDays: []
 
   readonly property string homeDir: Quickshell.env("HOME") || ""
@@ -217,6 +222,7 @@ BarWidget {
   function applyViewParsed(parsed) {
     if (!parsed) return
     root.viewStatusState = parsed.state
+    if (parsed.state === "error") root.viewFailureSeq += 1
     root.viewDate = parsed.date || root.viewDate
     root.viewPath = parsed.path
     root.viewExists = parsed.exists === true
@@ -603,6 +609,7 @@ BarWidget {
 
       if (root.actionBinaryExhausted) {
         root.viewStatusState = "error"
+        root.viewFailureSeq += 1
         root.viewErrorCode = isExecError ? "exec_error" : "backend_error"
         root.viewError = isExecError
           ? "Backend cannot run on this architecture (" + root.hostArch + ")"
