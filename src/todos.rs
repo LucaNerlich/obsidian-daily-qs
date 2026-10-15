@@ -20,6 +20,15 @@ fn tasks_heading_re() -> Regex {
     Regex::new(r"(?i)^#{1,6}\s+(tasks|todos)\s*$").expect("tasks heading regex")
 }
 
+/// Matcher for markdown ATX headings (up to 3 leading spaces, optional closing
+/// hashes). Shared by the heading filter and the insert path so both agree on
+/// which lines delimit a section — previously the read side had its own,
+/// stricter pattern, so `  ## Tasks` or `# Tasks #` was a section to insert
+/// into but not one to display.
+fn any_heading_re() -> Regex {
+    Regex::new(r"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$").expect("heading regex")
+}
+
 #[derive(Default)]
 struct FenceScanner {
     open: Option<(u8, usize)>,
@@ -164,7 +173,7 @@ fn filter_todos_by_heading(
     };
     let want_l = want.to_lowercase();
     let lines: Vec<&str> = content.lines().collect();
-    let heading_re = Regex::new(r"^(#{1,6})\s+(.+?)\s*$").expect("heading regex");
+    let heading_re = any_heading_re();
     // Inclusive start / exclusive end as 1-based file line numbers.
     let mut ranges: Vec<(usize, usize)> = Vec::new();
     let mut i = 0usize;
@@ -1223,8 +1232,7 @@ fn insert_todo_lines(
     heading: Option<&str>,
 ) -> String {
     let default_heading = tasks_heading_re();
-    let any_heading =
-        Regex::new(r"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$").expect("heading regex");
+    let any_heading = any_heading_re();
     let lines: Vec<&str> = content.lines().collect();
     let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
 
@@ -1880,6 +1888,35 @@ mod tests {
             "# Day\n\n## Inbox\n\n- [ ] inbox-item\n\n## Notes\n\n- [ ] parent\n  - [ ] child\n"
         );
         let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn read_and_insert_agree_on_indented_and_closed_headings() {
+        // `add --heading Tasks` inserts under `  ## Tasks` or `# Tasks #`; the
+        // read filter must see the same section, or the todo that was just
+        // added is invisible (and repeated adds pile up).
+        for heading in ["  ## Tasks", "# Tasks #", "## Tasks"] {
+            let (vault, today, _) = vault_with(&format!(
+                "# Day\n\n{heading}\n\n- [ ] existing\n\n# Later\n\n- [ ] outside\n"
+            ));
+            add_todo_under(&vault, today, "added", None, Some("Tasks")).unwrap();
+            let snap = read_snapshot_filtered(&vault, today, Some("Tasks")).unwrap();
+            let todos = snap.todos.unwrap();
+            let texts: Vec<&str> = todos.iter().map(|t| t.text.as_str()).collect();
+            assert!(
+                texts.contains(&"added"),
+                "todo added under {heading:?} is not visible: {texts:?}"
+            );
+            assert!(
+                texts.contains(&"existing"),
+                "existing todo under {heading:?} is not visible: {texts:?}"
+            );
+            assert!(
+                !texts.contains(&"outside"),
+                "the section for {heading:?} leaked past the next heading: {texts:?}"
+            );
+            let _ = fs::remove_dir_all(vault.root());
+        }
     }
 
     #[test]
