@@ -480,10 +480,16 @@ fn emit(snap: Snapshot) -> ExitCode {
 fn emit_json<T: serde::Serialize>(value: &T, failed: bool) -> ExitCode {
     let line = serde_json::to_string(value).expect("serializes");
     let mut out = io::stdout().lock();
-    if writeln!(out, "{line}").is_err() || out.flush().is_err() {
-        // Never panic on a closed stdout (see #12), but do not claim success
-        // either: the caller asked for output it did not receive.
-        return ExitCode::FAILURE;
+    let written = writeln!(out, "{line}").and_then(|()| out.flush());
+    if let Err(err) = written {
+        // Never panic on a closed stdout (see #12). A reader that went away
+        // (`cmd | head`) consumed what it asked for, so that is not a failure;
+        // any other write error means the caller did not get the output.
+        return if err.kind() == io::ErrorKind::BrokenPipe {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
     }
     if failed {
         ExitCode::FAILURE
