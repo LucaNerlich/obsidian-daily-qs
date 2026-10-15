@@ -68,34 +68,28 @@ BarWidget {
   // Today (bar label) — always fed by `watch`.
   property string statusState: root.archSupported ? "ok" : "error"
   property string date: ""
-  property string path: ""
   property bool exists: false
   property int openCount: 0
   property int doneCount: 0
   property var todos: []
   property string error: root.archSupported ? "" : "Unsupported architecture: " + hostArch
   property string errorCode: root.archSupported ? "" : "bad_arch"
-  property string obsidianUri: ""
   property int carryOverCount: 0
   property bool isToday: true
   property string templateName: ""
-  property bool createdFromTemplate: false
 
   // Panel view (may differ from today when day-switching).
   property string viewDate: ""
   property string viewStatusState: "ok"
-  property string viewPath: ""
   property bool viewExists: false
   property int viewOpenCount: 0
   property int viewDoneCount: 0
   property var viewTodos: []
   property string viewError: ""
   property string viewErrorCode: ""
-  property string viewObsidianUri: ""
   property int viewCarryOverCount: 0
   property bool viewIsToday: true
   property string viewTemplateName: ""
-  property bool viewCreatedFromTemplate: false
   // Bumped on every failed action response. A failure can repeat the identical
   // `viewStatusState`/`viewError` values, which emits no change signal, so the
   // panel cannot detect it by watching those; this counter is monotonic, so its
@@ -118,18 +112,15 @@ BarWidget {
   readonly property var status: ({
     state: root.statusState,
     date: root.date,
-    path: root.path,
     exists: root.exists,
     openCount: root.openCount,
     doneCount: root.doneCount,
     todos: root.todos,
     error: root.error,
     errorCode: root.errorCode,
-    obsidianUri: root.obsidianUri,
     carryOverCount: root.carryOverCount,
     isToday: root.isToday,
-    templateName: root.templateName,
-    createdFromTemplate: root.createdFromTemplate
+    templateName: root.templateName
   })
   readonly property string labelText: Model.labelText(status)
   readonly property string tooltipText: Model.tooltipText(status)
@@ -208,18 +199,15 @@ BarWidget {
     if (!parsed) return
     root.statusState = parsed.state
     root.date = parsed.date
-    root.path = parsed.path
     root.exists = parsed.exists === true
     root.openCount = parsed.openCount
     root.doneCount = parsed.doneCount
     root.todos = parsed.todos || []
     root.error = parsed.error || ""
     root.errorCode = parsed.errorCode || ""
-    root.obsidianUri = parsed.obsidianUri || ""
     root.carryOverCount = parsed.carryOverCount || 0
     root.isToday = parsed.isToday === true
     root.templateName = parsed.templateName || ""
-    root.createdFromTemplate = parsed.createdFromTemplate === true
     if (root.viewDate === "" || root.viewDate === parsed.date)
       root.applyViewParsed(parsed)
   }
@@ -229,18 +217,15 @@ BarWidget {
     root.viewStatusState = parsed.state
     if (parsed.state === "error") root.viewFailureSeq += 1
     root.viewDate = parsed.date || root.viewDate
-    root.viewPath = parsed.path
     root.viewExists = parsed.exists === true
     root.viewOpenCount = parsed.openCount
     root.viewDoneCount = parsed.doneCount
     root.viewTodos = parsed.todos || []
     root.viewError = parsed.error || ""
     root.viewErrorCode = parsed.errorCode || ""
-    root.viewObsidianUri = parsed.obsidianUri || ""
     root.viewCarryOverCount = parsed.carryOverCount || 0
     root.viewIsToday = parsed.isToday === true
     root.viewTemplateName = parsed.templateName || ""
-    root.viewCreatedFromTemplate = parsed.createdFromTemplate === true
   }
 
   function applyViewLine(line) {
