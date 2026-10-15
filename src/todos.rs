@@ -807,6 +807,7 @@ pub fn edit_todo(
     if idx >= lines.len() {
         return Err(VaultError::Io(format!("line {line} is past end of file")));
     }
+    reject_fenced_line(&content, line)?;
     let caps = re
         .captures(&lines[idx])
         .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
@@ -1061,6 +1062,7 @@ pub fn set_indent(
     if idx >= lines.len() {
         return Err(VaultError::Io(format!("line {line} is past end of file")));
     }
+    reject_fenced_line(&content, line)?;
     let caps = re
         .captures(&lines[idx])
         .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
@@ -1468,6 +1470,20 @@ fn finish_body(out: Vec<String>) -> String {
     body
 }
 
+/// Reject a 1-based line that is a fence marker or sits inside a fenced code
+/// block. The read path already ignores those lines, so a checkbox there is a
+/// code sample the user does not consider a todo — a line-addressed mutation
+/// (`toggle`/`edit`/`indent` without `--expect-text`) must not rewrite it.
+fn reject_fenced_line(content: &str, line: usize) -> Result<(), VaultError> {
+    let lines: Vec<&str> = content.lines().collect();
+    if fence_mask(&lines).get(line - 1).copied().unwrap_or(false) {
+        return Err(VaultError::Io(format!(
+            "line {line} is inside a fenced code block"
+        )));
+    }
+    Ok(())
+}
+
 fn toggle_line(content: &str, line: usize) -> Result<String, VaultError> {
     let re = checkbox_re();
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
@@ -1478,6 +1494,7 @@ fn toggle_line(content: &str, line: usize) -> Result<String, VaultError> {
             lines.len()
         )));
     }
+    reject_fenced_line(content, line)?;
     let current = lines[idx].clone();
     let caps = re
         .captures(&current)
@@ -1965,6 +1982,34 @@ mod tests {
             body,
             "# Day\n\n## Inbox\n\n- [ ] inbox-item\n\n## Notes\n\n- [ ] parent\n  - [ ] child\n"
         );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn line_addressed_mutations_reject_a_fenced_line() {
+        // The read path ignores checkboxes inside a fence; a line-addressed
+        // mutation without `--expect-text` must not rewrite one either.
+        let body = "# Day\n\n```\n- [ ] sample\n```\n\n- [ ] real\n";
+        let (vault, today, note) = vault_with(body);
+        for (label, result) in [
+            ("toggle", toggle_todo(&vault, today, 4, None).map(|_| ())),
+            (
+                "edit",
+                edit_todo(&vault, today, 4, None, "changed").map(|_| ()),
+            ),
+            ("indent", set_indent(&vault, today, 4, None, 1).map(|_| ())),
+        ] {
+            let err = result.expect_err(&format!("{label} must reject a fenced line"));
+            assert!(
+                err.to_string().contains("fenced"),
+                "{label}: unclear error {err}"
+            );
+            assert_eq!(
+                fs::read_to_string(&note).unwrap(),
+                body,
+                "{label} rewrote the note"
+            );
+        }
         let _ = fs::remove_dir_all(vault.root());
     }
 
