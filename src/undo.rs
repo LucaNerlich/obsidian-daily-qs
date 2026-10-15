@@ -33,18 +33,53 @@ struct UndoRecordMulti {
     files: Vec<UndoFile>,
 }
 
-fn undo_path() -> PathBuf {
+fn undo_path() -> Result<PathBuf, VaultError> {
     if let Ok(override_path) = std::env::var("OBSIDIAN_DAILY_QS_UNDO_PATH") {
         let trimmed = override_path.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
+            return Ok(PathBuf::from(trimmed));
         }
     }
-    let cache = std::env::var_os("XDG_CACHE_HOME")
+    Ok(
+        cache_dir(std::env::var_os("XDG_CACHE_HOME"), std::env::var_os("HOME"))?
+            .join("obsidian-daily-qs")
+            .join("last-undo.json"),
+    )
+}
+
+/// Pick the cache directory for the undo file.
+///
+/// Deliberately has **no** shared-directory fallback: the undo file holds the
+/// previous contents of a note, so writing it into a world-writable location
+/// (the old `/tmp` fallback) would expose vault text and let another local user
+/// pre-plant a symlink for the write to follow. A missing HOME is an error, not
+/// a reason to guess a location.
+fn cache_dir(
+    xdg_cache_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf, VaultError> {
+    xdg_cache_home
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    cache.join("obsidian-daily-qs").join("last-undo.json")
+        .or_else(|| home.map(|h| PathBuf::from(h).join(".cache")))
+        .ok_or_else(|| {
+            VaultError::Io("cannot locate the undo cache: set HOME or XDG_CACHE_HOME".into())
+        })
+}
+
+/// Create a directory tree owner-only (0700) on Unix. The undo file itself is
+/// already created 0600; this keeps the directory that holds it private too.
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dir)
 }
 
 pub fn record_before(
@@ -64,7 +99,7 @@ pub fn record_before_multi(
     date: NaiveDate,
     files: &[(&Path, Option<&str>)],
 ) -> Result<(), VaultError> {
-    record_before_multi_to(vault, date, files, &undo_path())
+    record_before_multi_to(vault, date, files, &undo_path()?)
 }
 
 /// Same as [`record_before_multi`] but writes to an explicit path. Used by
@@ -88,7 +123,7 @@ pub fn record_before_multi_to(
             .collect(),
     };
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
+        create_private_dir(parent).map_err(|e| {
             VaultError::Io(format!(
                 "failed to create undo dir {}: {e}",
                 parent.display()
@@ -177,7 +212,9 @@ fn restrict_undo_permissions(_dest: &Path) -> std::io::Result<()> {
 /// Drop any pending undo record (used when a multi-note mutation fails after
 /// recording `before` states but rolls everything back, leaving no net change).
 pub fn discard() {
-    discard_at(&undo_path())
+    if let Ok(dest) = undo_path() {
+        discard_at(&dest);
+    }
 }
 
 /// Same as [`discard`] but for an explicit undo path (tests).
@@ -186,7 +223,7 @@ pub fn discard_at(dest: &Path) {
 }
 
 pub fn undo_last(vault: &Vault) -> Result<Snapshot, VaultError> {
-    undo_last_from(vault, &undo_path())
+    undo_last_from(vault, &undo_path()?)
 }
 
 /// Same as [`undo_last`] but reads a specific undo file. Used by tests with
@@ -245,6 +282,35 @@ pub fn undo_last_from(vault: &Vault, dest: &Path) -> Result<Snapshot, VaultError
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn undo_cache_needs_home_or_xdg_cache_home() {
+        // No shared-directory fallback: a missing HOME must be an error, not a
+        // write into a world-writable location that holds note contents.
+        let err = cache_dir(None, None).unwrap_err();
+        assert!(err.to_string().contains("HOME or XDG_CACHE_HOME"));
+
+        assert_eq!(
+            cache_dir(Some(std::ffi::OsString::from("/xdg")), None).unwrap(),
+            PathBuf::from("/xdg")
+        );
+        assert_eq!(
+            cache_dir(None, Some(std::ffi::OsString::from("/home/u"))).unwrap(),
+            PathBuf::from("/home/u/.cache")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_cache_dir_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tmp_path("undo-dir-mode");
+        let nested = root.join("a").join("b");
+        create_private_dir(&nested).unwrap();
+        let mode = fs::metadata(&nested).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "undo cache dir must not be readable by others");
+        let _ = fs::remove_dir_all(&root);
+    }
 
     static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
