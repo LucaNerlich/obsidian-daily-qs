@@ -323,9 +323,38 @@ fn move_open_from_previous(
         .filter(|item| !existing.contains(&item.text))
         .map(|item| (item.depth, item.text))
         .collect();
-    if !to_move.is_empty() {
-        add_todo_lines(vault, date, &to_move, heading)?;
+
+    // Read both notes' pre-mutation contents before touching anything: a read
+    // failure must leave the vault untouched, and the undo record needs both
+    // bodies to restore them together.
+    let prev_path = resolved_note_path(vault, &config, prev)?;
+    let prev_before = fs::read_to_string(&prev_path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", prev_path.display())))?;
+    let target_before = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+
+    if !to_move.is_empty()
+        && let Err(e) = add_todo_lines(vault, date, &to_move, heading)
+    {
+        // The append is atomic, so nothing changed and there is nothing to undo.
+        crate::undo::discard();
+        return Err(e);
     }
+    // Record both notes *before* the source is touched. The append above
+    // recorded the target alone, so a single undo used to empty the target while
+    // the source had already been emptied — the todos ended up in neither note.
+    // Writing the pair here covers the success path and both interruption
+    // points: a crash between this record and the removal, and a removal that
+    // fails, both leave a record that restores the vault, so the removal failure
+    // below must not discard it.
+    crate::undo::record_before_multi(
+        vault,
+        date,
+        &[
+            (&prev_path, Some(prev_before.as_str())),
+            (&path, Some(target_before.as_str())),
+        ],
+    )?;
     // Reconcile against the target's current open todos instead of only the
     // lines added above: if an earlier run added to the target but failed
     // before removing from the previous note (crash, write error), the
@@ -339,6 +368,11 @@ fn move_open_from_previous(
             .map(|t| (t.depth, t.text))
             .collect()
     };
+    // The record above is deliberately kept on failure: the vault is then
+    // half-moved (the target holds the carried copies and the source still does
+    // too), and one undo is the repair. Discarding it — as an earlier draft did
+    // — removed the only way back and reported "nothing to undo" exactly when it
+    // was needed.
     remove_todos(vault, prev, &target_open)?;
     Ok(to_move.len())
 }
