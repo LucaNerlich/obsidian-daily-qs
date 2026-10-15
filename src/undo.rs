@@ -58,9 +58,17 @@ fn cache_dir(
     xdg_cache_home: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
 ) -> Result<PathBuf, VaultError> {
+    // A set-but-empty or relative value must not be used: `PathBuf::from("")`
+    // would make the undo file relative to the process CWD, which can be a
+    // shared directory — the exposure this module exists to avoid. The XDG
+    // spec requires an absolute path for `XDG_CACHE_HOME`.
+    let usable = |value: std::ffi::OsString| {
+        let path = PathBuf::from(value);
+        (!path.as_os_str().is_empty() && path.is_absolute()).then_some(path)
+    };
     xdg_cache_home
-        .map(PathBuf::from)
-        .or_else(|| home.map(|h| PathBuf::from(h).join(".cache")))
+        .and_then(usable)
+        .or_else(|| home.and_then(usable).map(|h| h.join(".cache")))
         .ok_or_else(|| {
             VaultError::Io("cannot locate the undo cache: set HOME or XDG_CACHE_HOME".into())
         })
@@ -70,11 +78,18 @@ fn cache_dir(
 /// already created 0600; this keeps the directory that holds it private too.
 #[cfg(unix)]
 fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(dir)
+        .create(dir)?;
+    // `mode` applies only when the directory is created. A pre-existing cache
+    // directory — from an older version, a root-run tool, or another local user
+    // — keeps its loose mode otherwise, which would let someone replace the
+    // undo file (the enabler for the symlink case in `write_undo_file`).
+    // Tighten the leaf only, never recursively, so `~/.cache` itself is left
+    // alone; a foreign-owned directory now fails with a clear `EPERM`.
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
 }
 
 #[cfg(not(unix))]
@@ -99,7 +114,20 @@ pub fn record_before_multi(
     date: NaiveDate,
     files: &[(&Path, Option<&str>)],
 ) -> Result<(), VaultError> {
-    record_before_multi_to(vault, date, files, &undo_path()?)
+    let dest = undo_path()?;
+    // Harden only the directory this module manages. An explicit override path
+    // (tests, or a user pointing `OBSIDIAN_DAILY_QS_UNDO_PATH` somewhere shared)
+    // may legitimately live in a directory we do not own, and chmod'ing that
+    // would be wrong — and would fail with EPERM on a shared temp dir.
+    if let Some(parent) = dest.parent() {
+        create_private_dir(parent).map_err(|e| {
+            VaultError::Io(format!(
+                "failed to secure undo dir {}: {e}",
+                parent.display()
+            ))
+        })?;
+    }
+    record_before_multi_to(vault, date, files, &dest)
 }
 
 /// Same as [`record_before_multi`] but writes to an explicit path. Used by
@@ -123,7 +151,7 @@ pub fn record_before_multi_to(
             .collect(),
     };
     if let Some(parent) = dest.parent() {
-        create_private_dir(parent).map_err(|e| {
+        fs::create_dir_all(parent).map_err(|e| {
             VaultError::Io(format!(
                 "failed to create undo dir {}: {e}",
                 parent.display()
@@ -154,6 +182,22 @@ pub fn record_before_multi_to(
 fn write_undo_file(dest: &Path, json: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+
+    // Never write through a symlink: `remove_file` unlinks one rather than
+    // following it, so a pre-planted `last-undo.json -> victim` is removed
+    // instead of being written through (which `create(true).truncate(true)` did
+    // here, and the follow-up chmod followed it too). The remaining
+    // check-then-open window needs write access to this file's directory, which
+    // `create_private_dir` keeps owner-only — that is why the two go together.
+    //
+    // Unlike `create_new`, `create(true).truncate(true)` tolerates replacement
+    // races on the single shared slot (several mutations, or test threads, can
+    // write it concurrently) instead of failing one of them.
+    if let Ok(meta) = fs::symlink_metadata(dest)
+        && meta.file_type().is_symlink()
+    {
+        fs::remove_file(dest)?;
+    }
     fs::OpenOptions::new()
         .write(true)
         .create(true)
