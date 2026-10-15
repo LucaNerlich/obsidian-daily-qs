@@ -292,8 +292,11 @@ fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, Vaul
 /// note so it is left with only its done todos. Todos whose parent was not
 /// carried are re-parented under the nearest carried ancestor (depth is
 /// clamped to previous depth + 1).
-/// Open todos that already exist in `date` are not duplicated and also stay
-/// in the source note. Returns the number of moved todos.
+/// Open todos that already exist in `date` are not duplicated. The source note
+/// is emptied of at most as many lines per text as the target holds — enough to
+/// complete a move that was interrupted between the append and the removal,
+/// without deleting more identical-looking lines than the target can account
+/// for. Returns the number of moved todos.
 ///
 /// When `heading` names a markdown section (e.g. `Inbox`), carried items are
 /// inserted there; otherwise the default placement (Tasks/Todos, first list,
@@ -328,9 +331,9 @@ fn move_open_from_previous(
             .collect()
     };
     let to_move: Vec<(usize, String)> = items
-        .into_iter()
+        .iter()
         .filter(|item| !existing.contains(&item.text))
-        .map(|item| (item.depth, item.text))
+        .map(|item| (item.depth, item.text.clone()))
         .collect();
 
     // Read both notes' pre-mutation contents before touching anything: a read
@@ -382,15 +385,47 @@ fn move_open_from_previous(
     // too), and one undo is the repair. Discarding it — as an earlier draft did
     // — removed the only way back and reported "nothing to undo" exactly when it
     // was needed.
-    remove_todos(vault, prev, &target_open)?;
+    let budget = removal_budget(
+        items.iter().map(|item| item.text.as_str()),
+        target_open.iter().map(|(_, text)| text.as_str()),
+    );
+    remove_todos(vault, prev, &budget)?;
     Ok(to_move.len())
 }
 
-/// Remove the given still-open todos (matched by text) from `date`'s note.
+/// How many source lines may be removed per todo text: the target's count for
+/// that text, capped by how many open lines the source actually has. Each
+/// target line can account for at most one source line.
+fn removal_budget<'a>(
+    source: impl Iterator<Item = &'a str>,
+    target: impl Iterator<Item = &'a str>,
+) -> std::collections::HashMap<String, usize> {
+    let mut available: std::collections::HashMap<&'a str, usize> = std::collections::HashMap::new();
+    for text in source {
+        *available.entry(text).or_default() += 1;
+    }
+    let mut budget: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for text in target {
+        let left = available.get(text).copied().unwrap_or(0);
+        if left == 0 {
+            continue;
+        }
+        let entry = budget.entry(text.to_string()).or_insert(0);
+        if *entry < left {
+            *entry += 1;
+        }
+    }
+    budget
+}
+
+/// Remove still-open todos from `date`'s note, at most as many lines per text
+/// as `budget` allows. The budget bounds the reconcile: a text collision with a
+/// todo the target already had must not delete every identical-looking line in
+/// the source note.
 fn remove_todos(
     vault: &Vault,
     date: NaiveDate,
-    items: &[(usize, String)],
+    budget: &std::collections::HashMap<String, usize>,
 ) -> Result<(), VaultError> {
     let config = vault.daily_notes_config()?;
     let path = resolved_note_path(vault, &config, date)?;
@@ -399,9 +434,17 @@ fn remove_todos(
     }
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+    let mut remaining = budget.clone();
     let drop: std::collections::HashSet<usize> = parse_todos(&content)
         .into_iter()
-        .filter(|t| !t.checked && items.iter().any(|(_, text)| text == &t.text))
+        .filter(|t| !t.checked)
+        .filter(|t| match remaining.get_mut(&t.text) {
+            Some(left) if *left > 0 => {
+                *left -= 1;
+                true
+            }
+            _ => false,
+        })
         .map(|t| t.line)
         .collect();
     if drop.is_empty() {
@@ -1886,6 +1929,30 @@ mod tests {
         assert_eq!(
             body,
             "# Day\n\n## Inbox\n\n- [ ] inbox-item\n\n## Notes\n\n- [ ] parent\n  - [ ] child\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_keeps_duplicate_source_lines_beyond_the_target_count() {
+        // Two identical open todos in the source, one same-text todo already in
+        // the target. The target can account for one, so exactly one source
+        // line may go — the other is not a stranded move and must survive.
+        let (vault, today, _) = vault_with("- [ ] water\n");
+        let ynote = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&ynote, "- [ ] water\n- [ ] water\n").unwrap();
+        carry_over(&vault, today, None).unwrap();
+        let ybody = fs::read_to_string(&ynote).unwrap();
+        assert_eq!(
+            ybody.matches("water").count(),
+            1,
+            "only one source line may be removed: {ybody:?}"
+        );
+        let target = fs::read_to_string(vault.root().join("Daily/2026-08-20.md")).unwrap();
+        assert_eq!(
+            target.matches("water").count(),
+            1,
+            "the target must not gain a duplicate: {target:?}"
         );
         let _ = fs::remove_dir_all(vault.root());
     }
