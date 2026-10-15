@@ -9,6 +9,7 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 node omarchy/model.test.mjs
+node omarchy/widget-argv.test.mjs
 ```
 
 ## Local privacy — never expose vault contents to other local users
@@ -31,21 +32,32 @@ put secrets in `/proc/<pid>/environ` either.
 - Pass sensitive values through a non-argv channel: stdin (preferred here), or
   another private transport that does not show up in `/proc/<pid>/cmdline`
   (and preferably not in `/proc/<pid>/environ` either).
-- Keep non-sensitive flags (`--date`, `--line`, `--heading`, `--vault`, etc.)
-  on argv as usual.
+- Keep non-sensitive flags (`--date`, `--line`, `--heading`, etc.) on argv as
+  usual. `--vault` / `--archive-folder` are for interactive CLI use only: the
+  widget sends those through stdin (see below).
 - When you add a new Process launch or CLI flag that carries private data,
   wire the widget through stdin (or equivalent) from day one — do not put
   that data on the command line in QML.
 
-**Concrete pattern in this repo (todo text, #7777):**
+**Concrete pattern in this repo (todo text and the vault root, #7777, #102):**
 
-- Mutations that take todo text / expected text use `--stdin` and a JSON
-  body written after start (`Process.stdinEnabled = true`, then `write(...)`,
-  then close stdin). Do **not** pass `--text` or `--expect-text` from
-  `omarchy/BarWidget.qml`.
-- Payload shape: `{"text":"..."}` for add; `{"text":"...","expectText":"..."}`
-  for edit; `{"expectText":"..."}` for toggle/delete/defer/indent/outdent when
-  an expect check is needed.
+- Every backend launch from `omarchy/BarWidget.qml` (`watch`, `week`, actions)
+  passes `--stdin` and one JSON payload written after start
+  (`Process.stdinEnabled = true`, then `write(...)`, then close stdin). The
+  payload always carries `vault` (and `archiveFolder` when the setting is
+  set); mutations add their todo fields. Do **not** pass `--vault`,
+  `--archive-folder`, `--text` or `--expect-text` from the widget.
+- Payload shape: `{"vault":"...","archiveFolder":"...","text":"..."}` for add;
+  `{"vault":"...","text":"...","expectText":"..."}` for edit; `{"vault":"..."}`
+  for status/week/watch/undo/carry-over/open; `expectText` for
+  toggle/delete/defer/indent/outdent when an expect check is needed.
+- The CLI keeps `--vault` / `--archive-folder` / `--text` / `--expect-text`
+  for interactive use, and `omarchy/widget-argv.test.mjs` guards the widget
+  side against a reintroduced argv path.
+- Exception: saving a *new* vault path from the panel calls `omarchy bar set
+  … vaultPath <path>` — omarchy's settings CLI (`bin/omarchy-bar`) takes the
+  value only as an argument. Keep it user-initiated and brief, and do not spawn
+  anything else with the path in argv.
 
 **Interactive CLI (allowed):** humans may pass `--text` / `--expect-text` (and
 similar) at a shell. Prefer `--stdin` in scripts or anything that might appear

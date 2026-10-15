@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The bar widget no longer passes the vault root (or the archive-folder
+  pattern) in the arguments of any backend process it launches: `watch`,
+  `week` and every action read them from the same stdin JSON channel as todo
+  text, so `/proc/<pid>/cmdline` no longer exposes the absolute vault path —
+  not even for the lifetime of the watch process (#102). `--vault` /
+  `--archive-folder` remain for interactive CLI use. Saving a new vault path
+  from the panel still uses `omarchy bar set`, whose CLI accepts the value
+  only as an argument.
 - The week strip now applies the configured `todoHeading` like the day view
   does (the backend's `week` command gained `--heading`), so the two can no
   longer disagree when the note holds checkboxes outside that heading (#62).

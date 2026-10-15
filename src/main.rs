@@ -23,7 +23,9 @@ use obsidian_daily_qs::{
     about = "Backend for the Omarchy Obsidian Daily bar widget",
     long_about = "Reads and updates markdown checkbox todos in Obsidian daily \
                   notes for the Omarchy Quattro widget. Pass --vault or set \
-                  OBSIDIAN_VAULT_ROOT."
+                  OBSIDIAN_VAULT_ROOT, or hand the private fields over as one \
+                  JSON object on stdin with --stdin (the widget path: nothing \
+                  private in process arguments)."
 )]
 struct Cli {
     /// Absolute path to the Obsidian vault (overrides OBSIDIAN_VAULT_ROOT)
@@ -34,6 +36,11 @@ struct Cli {
     /// (moment-style, e.g. dailies/_archive/YYYY) where old daily notes live
     #[arg(long, global = true)]
     archive_folder: Option<String>,
+
+    /// Read private fields (`vault`, `archiveFolder`, `text`, `expectText`)
+    /// as one JSON object from stdin instead of process arguments
+    #[arg(long, global = true)]
+    stdin: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -59,9 +66,6 @@ enum Command {
         /// Todo text (visible in process arguments; prefer --stdin from the widget)
         #[arg(long, conflicts_with = "stdin")]
         text: Option<String>,
-        /// Read `{"text":"..."}` from stdin instead of --text
-        #[arg(long)]
-        stdin: bool,
         #[arg(long)]
         date: Option<String>,
         /// Nest under this 1-based todo line
@@ -78,9 +82,6 @@ enum Command {
         line: usize,
         #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
-        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
-        #[arg(long)]
-        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -93,9 +94,6 @@ enum Command {
         text: Option<String>,
         #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
-        /// Read `{"text":"...","expectText":"..."}` from stdin
-        #[arg(long)]
-        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -105,9 +103,6 @@ enum Command {
         line: usize,
         #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
-        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
-        #[arg(long)]
-        stdin: bool,
         #[arg(long, default_value_t = false)]
         with_children: bool,
         #[arg(long)]
@@ -119,9 +114,6 @@ enum Command {
         line: usize,
         #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
-        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
-        #[arg(long)]
-        stdin: bool,
         #[arg(long, default_value_t = false)]
         with_children: bool,
         #[arg(long)]
@@ -136,9 +128,6 @@ enum Command {
         line: usize,
         #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
-        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
-        #[arg(long)]
-        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -148,9 +137,6 @@ enum Command {
         line: usize,
         #[arg(long, conflicts_with = "stdin")]
         expect_text: Option<String>,
-        /// Read `{"expectText":"..."}` from stdin instead of --expect-text
-        #[arg(long)]
-        stdin: bool,
         #[arg(long)]
         date: Option<String>,
     },
@@ -179,25 +165,72 @@ enum Command {
     },
 }
 
-/// Sensitive fields the widget sends on stdin so they never appear in argv.
+/// Private fields the widget sends on stdin so they never appear in argv.
+///
+/// `vault` and `archiveFolder` travel here too (#102): the widget's children
+/// are long-lived (a watch runs for the whole session) and `/proc/<pid>/cmdline`
+/// is readable by any local user on systems without `hidepid`.
 ///
 /// `deny_unknown_fields` is load-bearing: an absent `expectText` means "no
 /// stale-view check was requested", so a typo'd or snake_cased key would
 /// otherwise be dropped silently and the mutation would run against a stale
 /// view instead of erroring.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StdinFields {
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
     expect_text: Option<String>,
+    #[serde(default)]
+    vault: Option<String>,
+    #[serde(default)]
+    archive_folder: Option<String>,
+}
+
+impl StdinFields {
+    /// Vault root from the payload; empty means "not sent".
+    fn vault_path(&self) -> Option<PathBuf> {
+        empty_to_none(self.vault.clone()).map(PathBuf::from)
+    }
+
+    /// Archive pattern from the payload; empty means "not sent".
+    fn archive(&self) -> Option<String> {
+        empty_to_none(self.archive_folder.clone())
+    }
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let vault_arg = cli.vault.clone();
-    let archive_arg = cli.archive_folder.clone();
+    // Read the private channel first, once. Every widget launch carries the
+    // vault here, and a malformed payload must fail the command rather than
+    // silently fall back to argv/env: a "no vault" fallback would read or
+    // mutate the wrong vault.
+    let stdin_fields = if cli.stdin {
+        read_stdin_fields()
+    } else {
+        Ok(StdinFields::default())
+    };
+    if let Err(err) = &stdin_fields {
+        return command_error(&cli.command, err.clone());
+    }
+    let stdin_fields = stdin_fields.expect("checked above");
+    // `Some` exactly when --stdin asked for the payload, so the resolve_*
+    // helpers keep treating "no stdin" as "argv only".
+    let fields = cli.stdin.then_some(&stdin_fields);
+    if let Some(fields) = fields {
+        let (takes_text, takes_expect) = command_fields(&cli.command);
+        if let Err(err) = reject_unexpected(fields, takes_text, takes_expect) {
+            return command_error(&cli.command, err);
+        }
+    }
+    // Precedence: an explicit --vault wins over the payload, which wins over
+    // OBSIDIAN_VAULT_ROOT inside Vault::resolve.
+    let vault_arg = cli.vault.clone().or_else(|| stdin_fields.vault_path());
+    let archive_arg = cli
+        .archive_folder
+        .clone()
+        .or_else(|| stdin_fields.archive());
     match cli.command {
         Command::Status { date, heading } => emit(run(
             vault_arg,
@@ -206,18 +239,17 @@ fn main() -> ExitCode {
             date,
         )),
         Command::Watch { heading } => {
-            watch::watch(cli.vault.clone(), cli.archive_folder.clone(), heading);
+            watch::watch(vault_arg, archive_arg, heading);
             // The restart heuristic watches the child, not its status; a
             // long-running watch has no meaningful exit code to report.
             ExitCode::SUCCESS
         }
         Command::Add {
             text,
-            stdin,
             date,
             under_line,
             heading,
-        } => emit(match resolve_text(text, stdin) {
+        } => emit(match resolve_text(text, fields) {
             Ok(text) => run(
                 vault_arg,
                 archive_arg,
@@ -229,9 +261,8 @@ fn main() -> ExitCode {
         Command::Toggle {
             line,
             expect_text,
-            stdin,
             date,
-        } => emit(match resolve_expect_text(expect_text, stdin) {
+        } => emit(match resolve_expect_text(expect_text, fields) {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
@@ -244,9 +275,8 @@ fn main() -> ExitCode {
             line,
             text,
             expect_text,
-            stdin,
             date,
-        } => emit(match resolve_edit_fields(text, expect_text, stdin) {
+        } => emit(match resolve_edit_fields(text, expect_text, fields) {
             Ok((text, expect_text)) => run(
                 vault_arg,
                 archive_arg,
@@ -258,10 +288,9 @@ fn main() -> ExitCode {
         Command::Delete {
             line,
             expect_text,
-            stdin,
             with_children,
             date,
-        } => emit(match resolve_expect_text(expect_text, stdin) {
+        } => emit(match resolve_expect_text(expect_text, fields) {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
@@ -273,11 +302,10 @@ fn main() -> ExitCode {
         Command::Defer {
             line,
             expect_text,
-            stdin,
             with_children,
             date,
             heading,
-        } => emit(match resolve_expect_text(expect_text, stdin) {
+        } => emit(match resolve_expect_text(expect_text, fields) {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
@@ -298,9 +326,8 @@ fn main() -> ExitCode {
         Command::Indent {
             line,
             expect_text,
-            stdin,
             date,
-        } => emit(match resolve_expect_text(expect_text, stdin) {
+        } => emit(match resolve_expect_text(expect_text, fields) {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
@@ -312,9 +339,8 @@ fn main() -> ExitCode {
         Command::Outdent {
             line,
             expect_text,
-            stdin,
             date,
-        } => emit(match resolve_expect_text(expect_text, stdin) {
+        } => emit(match resolve_expect_text(expect_text, fields) {
             Ok(expect_text) => run(
                 vault_arg,
                 archive_arg,
@@ -383,44 +409,105 @@ fn stdin_shape_error(line: usize, column: usize) -> String {
     } else {
         String::new()
     };
-    format!("invalid stdin JSON: expected an object with `text`/`expectText`{where_}")
+    format!(
+        "invalid stdin JSON: expected an object with \
+         `vault`/`archiveFolder`/`text`/`expectText`{where_}"
+    )
 }
 
-fn resolve_text(text: Option<String>, stdin: bool) -> Result<String, String> {
-    if stdin {
-        let fields = read_stdin_fields()?;
-        return non_empty_field(fields.text, "text");
+/// Which todo fields each command accepts from the payload. The transport
+/// fields (`vault`, `archiveFolder`) are accepted everywhere; a payload that
+/// names a field the command does not use is rejected by
+/// [`reject_unexpected`] rather than silently dropped.
+fn command_fields(command: &Command) -> (bool, bool) {
+    match command {
+        Command::Add { .. } => (true, false),
+        Command::Edit { .. } => (true, true),
+        Command::Toggle { .. }
+        | Command::Delete { .. }
+        | Command::Defer { .. }
+        | Command::Indent { .. }
+        | Command::Outdent { .. } => (false, true),
+        Command::Status { .. }
+        | Command::Watch { .. }
+        | Command::Week { .. }
+        | Command::Undo
+        | Command::CarryOver { .. }
+        | Command::Open { .. } => (false, false),
     }
-    non_empty_field(text, "--text")
 }
 
-fn resolve_expect_text(expect_text: Option<String>, stdin: bool) -> Result<Option<String>, String> {
-    if !stdin {
-        return Ok(empty_to_none(expect_text));
+/// Reject a non-empty field the command does not take. Silently ignoring it
+/// would let a producer that names the expected text `text` skip the
+/// stale-view guard and mutate the wrong line with a success result (#53).
+fn reject_unexpected(
+    fields: &StdinFields,
+    takes_text: bool,
+    takes_expect: bool,
+) -> Result<(), String> {
+    if !takes_text && fields.text.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+        return Err(if takes_expect {
+            "unexpected `text` on stdin: this command takes `expectText`".into()
+        } else {
+            "unexpected `text` on stdin: this command takes no todo text".into()
+        });
     }
-    let fields = read_stdin_fields()?;
-    // `text` is a declared field but not one this command takes. Silently
-    // ignoring it would let a producer that names the expected text `text` skip
-    // the stale-view guard and mutate the wrong line with a success result.
-    if fields.text.is_some_and(|text| !text.trim().is_empty()) {
-        return Err("unexpected `text` on stdin: this command takes `expectText`".into());
+    if !takes_expect
+        && fields
+            .expect_text
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty())
+    {
+        return Err(if takes_text {
+            "unexpected `expectText` on stdin: this command takes only `text`".into()
+        } else {
+            "unexpected `expectText` on stdin: this command takes no expectation".into()
+        });
     }
-    Ok(empty_to_none(fields.expect_text))
+    Ok(())
+}
+
+/// The failure shape each command reports: `week` answers with a
+/// [`WeekSummary`], everything else with a [`Snapshot`].
+fn command_error(command: &Command, message: String) -> ExitCode {
+    match command {
+        Command::Week { .. } => {
+            let out = WeekSummary::error(message, "io");
+            emit_json(&out, true)
+        }
+        _ => emit(Snapshot::error_with_code(message, "io")),
+    }
+}
+
+fn resolve_text(text: Option<String>, fields: Option<&StdinFields>) -> Result<String, String> {
+    match fields {
+        Some(fields) => non_empty_field(fields.text.clone(), "text"),
+        None => non_empty_field(text, "--text"),
+    }
+}
+
+fn resolve_expect_text(
+    expect_text: Option<String>,
+    fields: Option<&StdinFields>,
+) -> Result<Option<String>, String> {
+    match fields {
+        Some(fields) => Ok(empty_to_none(fields.expect_text.clone())),
+        None => Ok(empty_to_none(expect_text)),
+    }
 }
 
 fn resolve_edit_fields(
     text: Option<String>,
     expect_text: Option<String>,
-    stdin: bool,
+    fields: Option<&StdinFields>,
 ) -> Result<(String, Option<String>), String> {
-    if stdin {
-        let fields = read_stdin_fields()?;
-        return Ok((
-            non_empty_field(fields.text, "text")?,
-            empty_to_none(fields.expect_text),
-        ));
+    match fields {
+        Some(fields) => Ok((
+            non_empty_field(fields.text.clone(), "text")?,
+            empty_to_none(fields.expect_text.clone()),
+        )),
+        None => Ok((non_empty_field(text, "--text")?, empty_to_none(expect_text))),
     }
-    Ok((non_empty_field(text, "--text")?, empty_to_none(expect_text)))
 }
 
 fn non_empty_field(value: Option<String>, name: &str) -> Result<String, String> {
