@@ -323,8 +323,21 @@ fn move_open_from_previous(
         .filter(|item| !existing.contains(&item.text))
         .map(|item| (item.depth, item.text))
         .collect();
-    if !to_move.is_empty() {
-        add_todo_lines(vault, date, &to_move, heading)?;
+
+    // Read both notes' pre-mutation contents before touching anything: a read
+    // failure must leave the vault untouched, and the undo record needs both
+    // bodies to restore them together.
+    let prev_path = resolved_note_path(vault, &config, prev)?;
+    let prev_before = fs::read_to_string(&prev_path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", prev_path.display())))?;
+    let target_before = fs::read_to_string(&path)
+        .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
+
+    if !to_move.is_empty()
+        && let Err(e) = add_todo_lines(vault, date, &to_move, heading)
+    {
+        crate::undo::discard();
+        return Err(e);
     }
     // Reconcile against the target's current open todos instead of only the
     // lines added above: if an earlier run added to the target but failed
@@ -339,7 +352,22 @@ fn move_open_from_previous(
             .map(|t| (t.depth, t.text))
             .collect()
     };
-    remove_todos(vault, prev, &target_open)?;
+    if let Err(e) = remove_todos(vault, prev, &target_open) {
+        crate::undo::discard();
+        return Err(e);
+    }
+    // One undo has to put every moved todo back in the source note. The append
+    // above recorded the target alone, so a single undo used to empty the
+    // target while the source had already been emptied — the todos ended up in
+    // neither note. This record names both files and supersedes that one.
+    crate::undo::record_before_multi(
+        vault,
+        date,
+        &[
+            (&prev_path, Some(prev_before.as_str())),
+            (&path, Some(target_before.as_str())),
+        ],
+    )?;
     Ok(to_move.len())
 }
 
