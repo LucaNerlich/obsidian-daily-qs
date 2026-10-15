@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- One-shot CLI commands now exit non-zero when the JSON body reports
+  `state: "error"` or the snapshot could not be written, so `cmd || fallback`,
+  CI steps and shell wrappers can tell a failed mutation from a successful one.
+  `watch` still exits 0 (its restart heuristic watches the process, not the
+  status), and a reader that closes the pipe early (`status | head`) is not
+  treated as a failure.
+
 ## [1.12.2] - 2026-10-03
 
 ### Fixed
