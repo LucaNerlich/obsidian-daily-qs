@@ -33,8 +33,8 @@ function parseLine(line) {
       isToday: false,
       templateName: "",
       createdFromTemplate: false,
-      errorCode: safeText(parsed.errorCode) || "io",
-      error: safeText(parsed.error)
+      errorCode: safeTodoText(parsed.errorCode) || "io",
+      error: safeTodoText(parsed.error)
     };
   }
 
@@ -72,8 +72,8 @@ function parseLine(line) {
 
   return {
     state: "ok",
-    date: safeText(parsed.date),
-    path: safeText(parsed.path),
+    date: safeTodoText(parsed.date),
+    path: safeTodoText(parsed.path),
     exists: parsed.exists === true,
     openCount: openCount,
     doneCount: doneCount,
@@ -81,7 +81,7 @@ function parseLine(line) {
     obsidianUri: safeUri(parsed.obsidianUri),
     carryOverCount: carryOverCount,
     isToday: parsed.isToday === true,
-    templateName: safeText(parsed.templateName),
+    templateName: safeTodoText(parsed.templateName),
     createdFromTemplate: parsed.createdFromTemplate === true,
     errorCode: "",
     error: ""
@@ -100,7 +100,7 @@ function parseWeekLine(line) {
   }
   if (!parsed || typeof parsed !== "object") return null;
   if (String(parsed.state || "") === "error") {
-    return { state: "error", days: [], error: safeText(parsed.error) };
+    return { state: "error", days: [], error: safeTodoText(parsed.error) };
   }
   var days = [];
   if (Array.isArray(parsed.days)) {
@@ -108,7 +108,7 @@ function parseWeekLine(line) {
       var d = parsed.days[i];
       if (!d || typeof d !== "object") continue;
       days.push({
-        date: safeText(d.date),
+        date: safeTodoText(d.date),
         openCount: Math.max(0, Math.floor(Number(d.openCount) || 0)),
         doneCount: Math.max(0, Math.floor(Number(d.doneCount) || 0)),
         exists: d.exists === true,
@@ -117,13 +117,6 @@ function parseWeekLine(line) {
     }
   }
   return { state: "ok", days: days, error: "" };
-}
-
-function safeText(value) {
-  if (typeof value !== "string") return "";
-  if (value.indexOf("<") !== -1 || value.indexOf(">") !== -1 || value.indexOf("&") !== -1)
-    return "";
-  return value;
 }
 
 function safeTodoText(value) {

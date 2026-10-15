@@ -88,12 +88,27 @@ test("parseLine clamps invalid depth/parentLine", () => {
   assert.equal(snap.todos[1].parentLine, null);
 });
 
-test("parseLine strips markup in error/text", () => {
+test("parseLine keeps error text with markup characters", () => {
   const snap = Model.parseLine(
-    JSON.stringify({ state: "error", error: "bad <script>" }),
+    JSON.stringify({
+      state: "error",
+      errorCode: "io",
+      error: "failed to read /home/u/Notes & Stuff/x.md: 500 <error>",
+    }),
   );
   assert.equal(snap.state, "error");
-  assert.equal(snap.error, "");
+  assert.equal(
+    snap.error,
+    "failed to read /home/u/Notes & Stuff/x.md: 500 <error>",
+  );
+  assert.equal(snap.errorCode, "io");
+});
+
+test("parseLine strips only control characters from error text", () => {
+  const snap = Model.parseLine(
+    JSON.stringify({ state: "error", error: "line\u0000break\u001f" }),
+  );
+  assert.equal(snap.error, "linebreak");
 });
 
 test("parseLine keeps todo text with markup characters", () => {
