@@ -308,6 +308,14 @@ Panel {
     }
   }
 
+  // A failed mutation can repeat the identical `statusState`/`error` values
+  // (a deterministic OS error on a stable path), and QML only emits a change
+  // signal when a value actually differs — so watching those two left the
+  // optimistic counter armed. `viewFailureSeq` is monotonic: it changes on
+  // every failure, so this handler always runs.
+  readonly property int viewFailureSeq: hasWatcher ? Number(watcher.viewFailureSeq || 0) : 0
+  onViewFailureSeqChanged: root.pendingAppendCount = 0
+
   onDateChanged: {
     root.selectedIndex = -1
     root.cancelEdit()
