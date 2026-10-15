@@ -435,8 +435,13 @@ fn remove_todos(
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     let mut remaining = budget.clone();
+    // Walk the candidates from the last line to the first, so the budget is
+    // spent on the deepest lines: when two lines share both text and nesting,
+    // the outermost one survives with its children instead of the child being
+    // left orphaned (or re-parented under an unrelated checked item).
     let drop: std::collections::HashSet<usize> = parse_todos(&content)
         .into_iter()
+        .rev()
         .filter(|t| !t.checked)
         .filter(|t| match remaining.get_mut(&t.text) {
             Some(left) if *left > 0 => {
@@ -1929,6 +1934,23 @@ mod tests {
         assert_eq!(
             body,
             "# Day\n\n## Inbox\n\n- [ ] inbox-item\n\n## Notes\n\n- [ ] parent\n  - [ ] child\n"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn carry_over_keeps_the_parent_when_identical_text_lines_nest() {
+        // Two candidates share the text and the nesting. The target can account
+        // for one, so one line goes — and it must be the child, not the parent,
+        // or the survivor is left orphaned at the top level.
+        let (vault, today, _) = vault_with("- [ ] water\n");
+        let ynote = vault.root().join("Daily").join("2026-08-19.md");
+        fs::write(&ynote, "- [ ] water\n  - [ ] water\n").unwrap();
+        carry_over(&vault, today, None).unwrap();
+        let ybody = fs::read_to_string(&ynote).unwrap();
+        assert_eq!(
+            ybody, "- [ ] water\n",
+            "the parent must survive with its child removed: {ybody:?}"
         );
         let _ = fs::remove_dir_all(vault.root());
     }
