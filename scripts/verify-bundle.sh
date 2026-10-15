@@ -100,13 +100,10 @@ toolchain_components="$(grep -E '^components[[:space:]]*=' "$repo_root/rust-tool
 grep -q 'rustfmt' <<<"$toolchain_components" || fail "rust-toolchain.toml must pin rustfmt on this channel (installing it only on stable skips CI format, which used to skip this job)"
 grep -q 'clippy' <<<"$toolchain_components" || fail "rust-toolchain.toml must pin clippy on this channel"
 
-if awk '
-  $0 == "  verify-bundle:" {in_job=1; next}
-  in_job && /^  [A-Za-z0-9_-]+:/ {in_job=0}
-  in_job && /^    needs:/ {exit 0}
-  END {exit 1}
-' "$repo_root/.github/workflows/ci.yml"; then
-  fail "CI job verify-bundle must not use needs: (a failed format check must not skip this attestation)"
+# Fail-closed: exit 0 from the guard means the caller must abort, whether the
+# job declares `needs:` or can no longer be located at all.
+if guard_reason="$(scripts/ci-needs-guard.sh "$repo_root/.github/workflows/ci.yml")"; then
+  fail "$guard_reason"
 fi
 
 crate_version="$(awk -F '"' '/^version = / {print $2; exit}' "$repo_root/Cargo.toml")"
