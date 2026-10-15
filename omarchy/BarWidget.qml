@@ -34,6 +34,10 @@ BarWidget {
   readonly property string fallbackBinary: "obsidian-daily-qs"
   property bool watchFallbackFailed: false
   property bool watchBundledFailed: false
+  // True while this widget is stopping the watch on purpose (settings or vault
+  // change). The exit that follows is ours, not a binary failure: it must not
+  // latch a candidate as broken nor flash the bar into the error state.
+  property bool watchRestarting: false
   property bool actionFallbackFailed: false
   property bool actionBundledFailed: false
   readonly property bool watchBinaryExhausted: watchBundledFailed && watchFallbackFailed
@@ -166,6 +170,10 @@ BarWidget {
   }
 
   function restartWatch() {
+    // Only mark it deliberate when an exit will actually follow. If the watch
+    // is already stopped, nothing consumes the flag and a later real crash
+    // would be misread as our own restart.
+    if (watchProc.running) root.watchRestarting = true
     watchProc.running = false
     watchRestartTimer.interval = 200
     watchRestartTimer.restart()
@@ -499,17 +507,32 @@ BarWidget {
       watchProc.startedOnce = true
       watchProc.startedAtMs = Date.now()
       watchProc.lastError = ""
+      // The stop this flag described is behind us; a fresh process means any
+      // exit from here on is unexpected again.
+      root.watchRestarting = false
     }
     onExited: {
-      root.statusState = "error"
+      // Deliberately no `statusState = "error"` here. onRunningChanged
+      // classifies the exit immediately after this fires; setting it here
+      // flashed the bar into the error state on a restart we asked for, and
+      // held it there for the whole retry delay.
       watchRestartTimer.restart()
     }
     onRunningChanged: {
       if (watchProc.running) return
       var failedStart = !watchProc.startedOnce
+      var deliberateStop = root.watchRestarting
+      root.watchRestarting = false
+      watchProc.startedOnce = false
+      if (deliberateStop && !failedStart) {
+        // We stopped a running watch on purpose (settings or vault change).
+        // restartWatch() already armed the short delay; clear stale stderr so
+        // it cannot mislead a later classification, and leave the state alone.
+        watchProc.lastError = ""
+        return
+      }
       var shortLived = !failedStart
         && (Date.now() - watchProc.startedAtMs) < watchProc.minHealthyRunMs
-      watchProc.startedOnce = false
       if (!failedStart && !shortLived) {
         // Graceful backend exit (e.g. signal) — restart without latching.
         watchProc.lastError = ""
