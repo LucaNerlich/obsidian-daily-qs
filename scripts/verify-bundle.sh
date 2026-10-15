@@ -113,6 +113,26 @@ crate_version="$(awk -F '"' '/^version = / {print $2; exit}' "$repo_root/Cargo.t
 manifest_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$repo_root/manifest.json")"
 [[ "$crate_version" == "$manifest_version" ]] || fail "Cargo.toml version ($crate_version) != manifest.json version ($manifest_version)"
 
+# The manifest is the contract the settings UI is generated from: every default
+# must have a schema field, and the widget must not read a setting the manifest
+# does not declare. That drift is invisible — it just drops a field from the
+# settings form — and it is exactly how the archive-folder setting came to be
+# unreachable in the UI (#57).
+python3 - "$repo_root/manifest.json" "$repo_root/omarchy/BarWidget.qml" <<'PY' || fail "manifest settings drifted from the widget (see the message above)"
+import json, re, sys
+
+manifest, qml = sys.argv[1], sys.argv[2]
+bar = json.load(open(manifest))["barWidget"]
+declared = set(bar["defaults"])
+schema = {entry["key"] for entry in bar["schema"]}
+if declared != schema:
+    sys.exit(f"manifest defaults/schema key mismatch: {sorted(declared ^ schema)}")
+read = set(re.findall(r'setting\(\s*"([^"]+)"', open(qml).read()))
+undeclared = read - declared
+if undeclared:
+    sys.exit(f"BarWidget.qml reads settings the manifest does not declare: {sorted(undeclared)}")
+PY
+
 # The committed ELF is never executed here: until the byte-for-byte rebuild
 # below has passed, it is untrusted input, and running it (e.g. `--version`)
 # would let it tamper with this script, PATH, or the toolchain before
