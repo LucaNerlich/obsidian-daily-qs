@@ -336,9 +336,25 @@ fn move_open_from_previous(
     if !to_move.is_empty()
         && let Err(e) = add_todo_lines(vault, date, &to_move, heading)
     {
+        // The append is atomic, so nothing changed and there is nothing to undo.
         crate::undo::discard();
         return Err(e);
     }
+    // Record both notes *before* the source is touched. The append above
+    // recorded the target alone, so a single undo used to empty the target while
+    // the source had already been emptied — the todos ended up in neither note.
+    // Writing the pair here covers the success path and both interruption
+    // points: a crash between this record and the removal, and a removal that
+    // fails, both leave a record that restores the vault, so the removal failure
+    // below must not discard it.
+    crate::undo::record_before_multi(
+        vault,
+        date,
+        &[
+            (&prev_path, Some(prev_before.as_str())),
+            (&path, Some(target_before.as_str())),
+        ],
+    )?;
     // Reconcile against the target's current open todos instead of only the
     // lines added above: if an earlier run added to the target but failed
     // before removing from the previous note (crash, write error), the
@@ -352,22 +368,12 @@ fn move_open_from_previous(
             .map(|t| (t.depth, t.text))
             .collect()
     };
-    if let Err(e) = remove_todos(vault, prev, &target_open) {
-        crate::undo::discard();
-        return Err(e);
-    }
-    // One undo has to put every moved todo back in the source note. The append
-    // above recorded the target alone, so a single undo used to empty the
-    // target while the source had already been emptied — the todos ended up in
-    // neither note. This record names both files and supersedes that one.
-    crate::undo::record_before_multi(
-        vault,
-        date,
-        &[
-            (&prev_path, Some(prev_before.as_str())),
-            (&path, Some(target_before.as_str())),
-        ],
-    )?;
+    // The record above is deliberately kept on failure: the vault is then
+    // half-moved (the target holds the carried copies and the source still does
+    // too), and one undo is the repair. Discarding it — as an earlier draft did
+    // — removed the only way back and reported "nothing to undo" exactly when it
+    // was needed.
+    remove_todos(vault, prev, &target_open)?;
     Ok(to_move.len())
 }
 
