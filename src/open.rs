@@ -5,11 +5,36 @@ use std::process::Command;
 
 use crate::config::VaultError;
 
-/// Build `obsidian://open?path=…` for an absolute note path.
-pub fn open_uri(path: &Path) -> String {
-    let abs = path.display().to_string();
-    let encoded = percent_encode_path(&abs);
-    format!("obsidian://open?path={encoded}")
+/// Build an Obsidian "open" URI for `note` inside `vault_root`.
+///
+/// Prefers the vault-relative form. The absolute `path=` form puts the whole
+/// local path — including private client/project folder names — into
+/// `xdg-open`'s argv, where any local user can read it from
+/// `/proc/<pid>/cmdline`; AGENTS.md forbids private data in argv.
+/// `vault=`/`file=` carries only the vault's own folder name and the note's
+/// path inside it.
+///
+/// Falls back to `path=` when the vault folder name is unavailable or the note
+/// is not under the vault root, so opening still works from an odd setup.
+pub fn open_uri(vault_root: &Path, note: &Path) -> String {
+    let relative = note
+        .strip_prefix(vault_root)
+        .ok()
+        .filter(|rel| !rel.as_os_str().is_empty())
+        .map(|rel| rel.display().to_string());
+    if let (Some(name), Some(relative)) = (vault_root.file_name(), relative) {
+        // A vault folder name cannot itself contain '/', so the path encoder
+        // produces the same bytes as a component encoder for it.
+        return format!(
+            "obsidian://open?vault={}&file={}",
+            percent_encode_path(&name.to_string_lossy()),
+            percent_encode_path(&relative),
+        );
+    }
+    format!(
+        "obsidian://open?path={}",
+        percent_encode_path(&note.display().to_string())
+    )
 }
 
 fn percent_encode_path(value: &str) -> String {
@@ -50,19 +75,40 @@ pub fn launch(uri: &str) -> Result<(), VaultError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
-    fn encodes_spaces_in_path() {
-        let uri = open_uri(Path::new("/vault/Daily Notes/2026-08-20.md"));
-        assert!(uri.starts_with("obsidian://open?path="));
-        assert!(uri.contains("Daily%20Notes"));
-        assert!(uri.contains("/2026-08-20.md"));
+    fn uses_the_vault_relative_form() {
+        let uri = open_uri(
+            Path::new("/home/u/vault"),
+            Path::new("/home/u/vault/Daily Notes/2026-08-20.md"),
+        );
+        assert_eq!(
+            uri,
+            "obsidian://open?vault=vault&file=Daily%20Notes/2026-08-20.md"
+        );
     }
 
     #[test]
-    fn keeps_slashes() {
-        let uri = open_uri(&PathBuf::from("/home/u/vault/a/b.md"));
-        assert_eq!(uri, "obsidian://open?path=/home/u/vault/a/b.md");
+    fn encodes_spaces_in_the_vault_name() {
+        let uri = open_uri(
+            Path::new("/home/u/My Vault"),
+            Path::new("/home/u/My Vault/2026-08-20.md"),
+        );
+        assert_eq!(uri, "obsidian://open?vault=My%20Vault&file=2026-08-20.md");
+    }
+
+    #[test]
+    fn keeps_slashes_in_the_note_path() {
+        let uri = open_uri(
+            Path::new("/home/u/vault"),
+            Path::new("/home/u/vault/a/b.md"),
+        );
+        assert_eq!(uri, "obsidian://open?vault=vault&file=a/b.md");
+    }
+
+    #[test]
+    fn falls_back_to_the_absolute_path_outside_the_vault() {
+        let uri = open_uri(Path::new("/home/u/vault"), Path::new("/elsewhere/a.md"));
+        assert_eq!(uri, "obsidian://open?path=/elsewhere/a.md");
     }
 }

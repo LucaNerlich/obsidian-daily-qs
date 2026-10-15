@@ -206,7 +206,7 @@ fn enrich_snapshot(
     config: &DailyNotesConfig,
     snap: &mut Snapshot,
 ) -> Result<(), VaultError> {
-    snap.obsidian_uri = Some(open::open_uri(path));
+    snap.obsidian_uri = Some(open::open_uri(vault.root(), path));
     let today = chrono::Local::now().date_naive();
     snap.is_today = Some(date == today);
     snap.carry_over_count = Some(carry_source_count(vault, date)?.unwrap_or(0));
