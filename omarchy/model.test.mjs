@@ -217,7 +217,17 @@ test("visibleTodos search is case-insensitive and keeps ancestors", () => {
   assert.deepEqual(visible.map((t) => t.text), ["Preorders", "Silent Hill Townfall"]);
   assert.deepEqual(Model.visibleTodos(status, false, "HILL").length, 2);
   assert.deepEqual(Model.visibleTodos(status, false, "milk").map((t) => t.text), ["Buy milk"]);
-  assert.deepEqual(Model.visibleTodos(status, false, ""), status.todos);
+  // Assert the visible set, not object identity: with no filter the function
+  // returns `status.todos` by reference, so comparing the two objects compares
+  // an array with itself and can never fail. Hardcode the expected lines
+  // rather than deriving them from the same array, so an in-place reorder
+  // cannot pass; spread into a main-realm array because the vm sandbox gives
+  // rebuilt arrays its own `Array` prototype, which strict deepEqual rejects
+  // (see the note above the sortOrder cases).
+  assert.deepEqual(
+    [...Model.visibleTodos(status, false, "").map((t) => t.line)],
+    [1, 2, 3],
+  );
 });
 
 test("visibleTodos combines search and openOnly", () => {
