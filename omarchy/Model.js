@@ -223,6 +223,24 @@ function isVaultSetupError(status) {
   return code === "missing_vault" || code === "bad_vault";
 }
 
+/**
+ * Normalize a configured sort order to one of the four supported modes.
+ *
+ * The single source of truth: `BarWidget.qml` calls this instead of
+ * re-implementing the mapping, so the fallback for an unrecognised value is
+ * executable and covered by `model.test.mjs` rather than living in an
+ * untestable `.qml` binding.
+ *
+ * @param {*} value - The raw setting.
+ * @return {string} "default" | "newest" | "openFirst" | "alphabetical".
+ */
+function normalizeSortOrder(value) {
+  var s = String(value === undefined || value === null ? "" : value).trim();
+  if (s === "alpha") return "alphabetical";
+  if (s === "newest" || s === "openFirst" || s === "alphabetical" || s === "default") return s;
+  return "default";
+}
+
 function sortTodos(items, sortOrder) {
   if (!Array.isArray(items) || items.length <= 1) return items;
   if (!sortOrder || sortOrder === "default") return items;

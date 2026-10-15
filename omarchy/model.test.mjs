@@ -230,6 +230,34 @@ test("visibleTodos search is case-insensitive and keeps ancestors", () => {
   );
 });
 
+test("normalizeSortOrder maps the alias and falls back for junk", () => {
+  assert.equal(Model.normalizeSortOrder("alpha"), "alphabetical");
+  for (const mode of ["newest", "openFirst", "alphabetical", "default"]) {
+    assert.equal(Model.normalizeSortOrder(mode), mode);
+  }
+  // An unrecognised value must land on "default"; sortTodos would otherwise
+  // treat it as newest-first, which is a silent reorder.
+  assert.equal(Model.normalizeSortOrder("bogus"), "default");
+  assert.equal(Model.normalizeSortOrder(""), "default");
+  assert.equal(Model.normalizeSortOrder(null), "default");
+  assert.equal(Model.normalizeSortOrder(undefined), "default");
+  assert.equal(Model.normalizeSortOrder(42), "default");
+});
+
+test("visibleTodos keeps file order for a normalized unknown value", () => {
+  const status = {
+    todos: [
+      { line: 1, checked: true, text: "b", depth: 0, parentLine: null },
+      { line: 2, checked: false, text: "c", depth: 0, parentLine: null },
+      { line: 3, checked: false, text: "a", depth: 0, parentLine: null },
+    ],
+  };
+  assert.deepEqual(
+    [...Model.visibleTodos(status, false, "", Model.normalizeSortOrder("bogus")).map((t) => t.line)],
+    [1, 2, 3],
+  );
+});
+
 test("visibleTodos combines search and openOnly", () => {
   const status = {
     todos: [

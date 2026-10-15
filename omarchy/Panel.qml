@@ -26,12 +26,10 @@ Panel {
   readonly property real todoHoverOverflow: Style.space(6)
 
   property bool openOnly: hasWatcher ? watcher.openOnlyDefault === true : false
-  property string sortOrder: {
-    if (!hasWatcher) return "default"
-    var s = String(watcher.sortOrderSetting || "default")
-    if (s === "alpha") return "alphabetical"
-    return (s === "newest" || s === "openFirst" || s === "alphabetical" || s === "default") ? s : "default"
-  }
+  // `BarWidget.sortOrderSetting` is readonly and already normalized (alpha ->
+  // alphabetical, anything unknown -> default), so re-mapping it here only
+  // creates a second place to update when a sort mode is added.
+  property string sortOrder: hasWatcher ? String(watcher.sortOrderSetting || "default") : "default"
   property string searchText: ""
   property int selectedIndex: -1
   property int editingLine: -1

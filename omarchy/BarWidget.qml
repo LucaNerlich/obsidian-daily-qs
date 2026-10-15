@@ -106,11 +106,8 @@ BarWidget {
   readonly property string insertHeading: String(setting("insertHeading", "") || "").trim()
   readonly property string archiveFolder: String(setting("archiveFolder", "") || "").trim()
   readonly property bool openOnlyDefault: setting("openOnly", false) === true
-  readonly property string sortOrderSetting: {
-    var s = String(setting("sortOrder", "default") || "default")
-    if (s === "alpha") return "alphabetical"
-    return (s === "newest" || s === "openFirst" || s === "alphabetical" || s === "default") ? s : "default"
-  }
+  // Single normalizer, in Model.js so it is covered by the node test job.
+  readonly property string sortOrderSetting: Model.normalizeSortOrder(setting("sortOrder", "default"))
   readonly property bool hideWhenDone: setting("hideWhenDone", false) === true
   readonly property bool hideWhenEmpty: setting("hideWhenEmpty", false) === true
 
