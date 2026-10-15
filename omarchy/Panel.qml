@@ -308,6 +308,17 @@ Panel {
     }
   }
 
+  // An optimistic add is only ever consumed by the todos list changing. A
+  // failed add does not change the list, so without this the counter stays
+  // armed and the next *unrelated* todos change consumes it: the selection and
+  // scroll jump to a row the user never added, and Enter then toggles it.
+  onStatusStateChanged: {
+    if (root.statusState !== "ok") root.pendingAppendCount = 0
+  }
+  onErrorChanged: {
+    if (root.error !== "") root.pendingAppendCount = 0
+  }
+
   onDateChanged: {
     root.selectedIndex = -1
     root.cancelEdit()
