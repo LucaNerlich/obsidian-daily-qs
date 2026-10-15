@@ -75,9 +75,15 @@ Panel {
   readonly property var selectedTodo: (selectedIndex >= 0 && selectedIndex < shownTodos.length)
     ? shownTodos[selectedIndex] : null
 
+  function clearSearch() {
+    root.searchText = ""
+    if (searchField)
+      searchField.text = ""
+  }
+
   onSearchAvailableChanged: {
     if (!root.searchAvailable) {
-      root.searchText = ""
+      root.clearSearch()
       if (searchField.activeFocus) inputField.forceActiveFocus()
     }
   }
@@ -96,7 +102,7 @@ Panel {
     if (underSelected === true && root.selectedTodo)
       underLine = root.selectedTodo.line
     if (underSelected !== true) {
-      root.searchText = ""
+      root.clearSearch()
       root.pendingAppendCount += 1
     }
     watcher.addTodo(inputField.text, underLine)
@@ -323,7 +329,7 @@ Panel {
 
   onOpenedChanged: {
     if (root.opened) {
-      root.searchText = ""
+      root.clearSearch()
       root.selectedIndex = -1
       root.cancelEdit()
       root.closeTodoMenu()
@@ -469,7 +475,7 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            TextField {
+            GuardedTextField {
               id: vaultPathField
               width: parent.width
               placeholderText: "~/Documents/vault"
@@ -584,7 +590,7 @@ Panel {
                 spacing: Style.space(6)
                 visible: root.searchAvailable
 
-                TextField {
+                GuardedTextField {
                   id: searchField
                   Layout.fillWidth: true
                   placeholderText: "Search todos… ( / )"
@@ -592,10 +598,13 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   text: root.searchText
-                  onTextEdited: root.searchText = searchField.text
+                  onTextChanged: {
+                    if (searchField.text !== root.searchText)
+                      root.searchText = searchField.text
+                  }
                   Keys.onEscapePressed: {
                     if (root.searchText !== "") {
-                      root.searchText = ""
+                      root.clearSearch()
                       inputField.forceActiveFocus()
                     } else {
                       root.close()
@@ -610,7 +619,7 @@ Panel {
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: {
-                    root.searchText = ""
+                    root.clearSearch()
                     searchField.forceActiveFocus()
                   }
                 }
@@ -872,7 +881,7 @@ Panel {
                         }
                       }
 
-                      TextField {
+                      GuardedTextField {
                         id: editField
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
@@ -947,7 +956,7 @@ Panel {
           width: parent.width
           spacing: Style.space(6)
 
-          TextField {
+          GuardedTextField {
             id: inputField
             Layout.fillWidth: true
             placeholderText: "Add a todo…"
@@ -956,17 +965,17 @@ Panel {
             font.pixelSize: Style.font.body
             onAccepted: root.addTodo(false)
             Keys.onEscapePressed: root.close()
-            Keys.onPressed: function(event) {
+            interceptKey: function(event) {
               if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                   && (event.modifiers & Qt.ShiftModifier)) {
                 root.addTodo(true)
-                event.accepted = true
-                return
+                return true
               }
               if (event.text === "/" && inputField.text === "" && root.searchAvailable) {
                 searchField.forceActiveFocus()
-                event.accepted = true
+                return true
               }
+              return false
             }
           }
 
