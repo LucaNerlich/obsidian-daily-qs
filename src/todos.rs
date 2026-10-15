@@ -2149,6 +2149,44 @@ mod tests {
     }
 
     #[test]
+    fn out_of_range_line_numbers_are_rejected_without_touching_the_note() {
+        // `rewrite_line` indexes `line - 1` directly, so its safety rests on
+        // every caller validating first. That contract needs a test: a future
+        // call site that forgets it would turn a clean `Err` into a panic in an
+        // always-on backend.
+        let body = "# Day\n\n- [ ] a\n";
+        let (vault, today, note) = vault_with(body);
+        for line in [0usize, 99] {
+            assert!(
+                toggle_todo(&vault, today, line, None).is_err(),
+                "toggle {line}"
+            );
+            assert!(
+                edit_todo(&vault, today, line, None, "x").is_err(),
+                "edit {line}"
+            );
+            assert!(
+                set_indent(&vault, today, line, None, 1).is_err(),
+                "indent {line}"
+            );
+            assert!(
+                delete_todo(&vault, today, line, None, false).is_err(),
+                "delete {line}"
+            );
+            assert!(
+                defer_todo(&vault, today, line, None, false, None).is_err(),
+                "defer {line}"
+            );
+            assert_eq!(
+                fs::read_to_string(&note).unwrap(),
+                body,
+                "line {line} changed the note"
+            );
+        }
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
     fn read_and_insert_agree_on_indented_and_closed_headings() {
         // `add --heading Tasks` inserts under `  ## Tasks` or `# Tasks #`; the
         // read filter must see the same section, or the todo that was just
