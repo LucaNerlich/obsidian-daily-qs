@@ -25,22 +25,12 @@ else
   targets=("${all_targets[@]}")
 fi
 
-export RUSTFLAGS="${RUSTFLAGS:-} \
-  --remap-path-prefix=${cargo_home}/registry/src=./registry/src \
-  --remap-path-prefix=${repo_root}=."
-
 cd "$repo_root"
 
-# Prefer rust-lld for the musl targets so the same command works on x86_64
-# and aarch64 hosts, native or cross, without installing a musl gcc toolchain.
-for target in "${targets[@]}"; do
-  normalized="${target^^}"
-  normalized="${normalized//-/_}"
-  linker_var="CARGO_TARGET_${normalized}_LINKER"
-  if [[ -z "${!linker_var:-}" ]]; then
-    declare -x "$linker_var"="rust-lld"
-  fi
-done
+# The reproducibility flags are shared with verify-bundle.sh so the rebuild
+# compares byte-for-byte; see scripts/bundle-env.sh.
+source "$repo_root/scripts/bundle-env.sh"
+bundle_env "${targets[@]}"
 
 for target in "${targets[@]}"; do
   cargo build --release --locked --target "$target"
