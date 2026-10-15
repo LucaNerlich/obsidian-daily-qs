@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The week strip now applies the configured `todoHeading` like the day view
+  does (the backend's `week` command gained `--heading`), so the two can no
+  longer disagree when the note holds checkboxes outside that heading (#62).
 - One-shot CLI commands now exit non-zero when the JSON body reports
   `state: "error"` or the snapshot could not be written, so `cmd || fallback`,
   CI steps and shell wrappers can tell a failed mutation from a successful one.

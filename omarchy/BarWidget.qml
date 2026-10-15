@@ -276,7 +276,11 @@ BarWidget {
 
   function refreshWeek() {
     var d = root.viewDate || Model.todayIso()
-    weekProc.command = [root.actionBinary].concat(root.withVault(["week", "--date", d]))
+    // Same heading filter as the day view: an unfiltered week strip counts
+    // checkboxes the panel (correctly) hides and contradicts the day counts
+    // right next to it (#62).
+    weekProc.command = [root.actionBinary].concat(
+      root.withVault(["week", "--date", d].concat(root.headingArgs())))
     weekProc.running = true
   }
 

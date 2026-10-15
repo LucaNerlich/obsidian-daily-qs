@@ -13,5 +13,6 @@ pub use status::{DaySummary, Snapshot, State, TodoItem, WeekSummary};
 pub use todos::{
     add_todo, add_todo_under, carry_over, defer_todo, delete_todo, edit_todo, ensure_note,
     open_in_obsidian, read_snapshot, read_snapshot_filtered, set_indent, toggle_todo, week_summary,
+    week_summary_filtered,
 };
 pub use undo::undo_last;

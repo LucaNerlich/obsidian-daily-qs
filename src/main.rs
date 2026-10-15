@@ -13,7 +13,7 @@ use obsidian_daily_qs::status::{Snapshot, State, WeekSummary};
 use obsidian_daily_qs::watch;
 use obsidian_daily_qs::{
     add_todo_under, carry_over, defer_todo, delete_todo, edit_todo, open_in_obsidian,
-    read_snapshot_filtered, set_indent, toggle_todo, undo_last, week_summary,
+    read_snapshot_filtered, set_indent, toggle_todo, undo_last, week_summary_filtered,
 };
 
 #[derive(Parser)]
@@ -160,6 +160,9 @@ enum Command {
     Week {
         #[arg(long)]
         date: Option<String>,
+        /// Only count todos under this markdown heading (e.g. Todos)
+        #[arg(long)]
+        heading: Option<String>,
     },
     /// Move the most recent previous daily note's still-open todos into the target day
     CarryOver {
@@ -327,10 +330,10 @@ fn main() -> ExitCode {
             },
             Err(err) => Snapshot::error_with_code(err.to_string(), err.error_code()),
         }),
-        Command::Week { date } => {
+        Command::Week { date, heading } => {
             let out = match Vault::resolve(vault_arg, archive_arg) {
                 Ok(vault) => match parse_date(date) {
-                    Ok(d) => match week_summary(&vault, d) {
+                    Ok(d) => match week_summary_filtered(&vault, d, heading.as_deref()) {
                         Ok(w) => w,
                         Err(err) => WeekSummary::error(err.to_string(), err.error_code()),
                     },
