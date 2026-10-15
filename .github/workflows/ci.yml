@@ -15,10 +15,11 @@ permissions:
 
 jobs:
   # Cheap gate so QML/README/doc-only commits skip the expensive Rust jobs
-  # below. Uses a plain `git diff` instead of a third-party action to avoid
-  # adding another supply-chain dependency. Anything we can't compute a
-  # sensible diff base for (workflow_dispatch, first push, force-push) defaults
-  # to `true` so we never silently skip a check we're unsure about.
+  # below. The diff-base logic lives in scripts/ci-changed-paths.sh (a plain
+  # `git diff`, no third-party action, no extra supply-chain dependency);
+  # anything we can't compute a sensible diff base for (workflow_dispatch,
+  # first push, force-push) defaults to `true` so we never silently skip a
+  # check we're unsure about.
   changes:
     name: detect changed paths
     runs-on: ubuntu-latest
@@ -30,22 +31,7 @@ jobs:
           fetch-depth: 0
 
       - id: filter
-        run: |
-          base=""
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            base="${{ github.event.pull_request.base.sha }}"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            base="${{ github.event.before }}"
-          fi
-          if [[ -z "$base" ]] || ! git cat-file -e "$base" 2>/dev/null; then
-            echo "rust=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git diff --name-only "$base" "${{ github.sha }}" | grep -qE '^(src/|tests/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|omarchy/bin/|scripts/.*\.sh$|Makefile$|\.github/workflows/ci\.yml$)'; then
-            echo "rust=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "rust=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: scripts/ci-changed-paths.sh "${{ github.event_name }}" "${{ github.event.pull_request.base.sha }}" "${{ github.event.before }}" "${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
   linux:
     name: test (ubuntu-latest)
@@ -96,7 +82,15 @@ jobs:
   # on every commit, even one that only touches QML, and even if a
   # prerequisite such as rustfmt is missing. A skipped verify cannot attest
   # that the bundled ELF matches the reviewed source. Do not add `needs:`
-  # here. The tag Release workflow re-runs the same script.
+  # here. The tag Release workflow re-runs the same script in strict mode.
+  #
+  # Bundles are refreshed only in the release PR (see AGENTS.md), so a commit
+  # that leaves omarchy/bin/ alone may carry a bundle whose source fingerprint
+  # trails src/. Those commits still get the integrity attestation (recorded
+  # hash, non-stripped, inspectable) but skip the byte-for-byte rebuild, which
+  # can only pass while the fingerprint is current. Any commit that edits
+  # omarchy/bin/ itself — and any bundle that is current — is verified
+  # strictly.
   verify-bundle:
     name: marketplace bundle (inspectable, reproducible)
     strategy:
@@ -110,12 +104,34 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Fail closed: only the combination "this change does not touch
+      # omarchy/bin/ and the committed bundle is already stale" relaxes the
+      # check; anything unsure (e.g. no resolvable diff base) demands a fresh
+      # bundle.
+      - name: Decide bundle verification mode
+        id: bundle-mode
+        run: |
+          set -euo pipefail
+          changed="$(scripts/ci-changed-paths.sh "${{ github.event_name }}" "${{ github.event.pull_request.base.sha }}" "${{ github.event.before }}" "${{ github.sha }}" | awk -F= '$1 == "bundle" { print $2 }')"
+          recorded="$(awk '{print $1}' omarchy/bin/obsidian-daily-qs.srcid)"
+          current="$(scripts/bundle-source-id.sh)"
+          if [[ "$changed" == "false" ]] && [[ "$recorded" != "$current" ]]; then
+            echo "strict=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::the committed bundle trails src/ by design (it is refreshed in the release PR, see AGENTS.md) and this change leaves omarchy/bin/ alone: verifying integrity only"
+          else
+            echo "strict=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # Inspect before installing the pinned toolchain so a rustup failure
       # cannot skip the non-stripped / recorded-hash / source-id attestation.
       # The source-id check catches a leftover ELF after a comment-only Rust
       # edit without waiting for the musl rebuild.
       - name: Inspect committed ELF
+        env:
+          VERIFY_BUNDLE_ALLOW_STALE: ${{ steps.bundle-mode.outputs.strict == 'true' && '0' || '1' }}
         run: VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh ${{ matrix.target }}
 
       # Pin to the toolchain in rust-toolchain.toml so the check reproduces
@@ -134,4 +150,5 @@ jobs:
       # binary in practice (the cross-built output doesn't byte-match a
       # native build of the same source).
       - name: Rebuild and compare byte-for-byte
+        if: steps.bundle-mode.outputs.strict == 'true'
         run: scripts/verify-bundle.sh ${{ matrix.target }}
