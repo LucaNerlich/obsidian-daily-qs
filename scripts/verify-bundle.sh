@@ -135,21 +135,11 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-export RUSTFLAGS="${RUSTFLAGS:-} \
-  --remap-path-prefix=${cargo_home}/registry/src=./registry/src \
-  --remap-path-prefix=${repo_root}=."
+# Same reproducibility flags the bundle was built with, so the rebuild
+# compares byte-for-byte; see scripts/bundle-env.sh.
+source "$repo_root/scripts/bundle-env.sh"
+bundle_env "${targets[@]}"
 export CARGO_TARGET_DIR="$tmp/target"
-
-# Use rust-lld so the rebuild matches the committed binaries on hosts without
-# a musl gcc cross toolchain.
-for target in "${targets[@]}"; do
-  normalized="${target^^}"
-  normalized="${normalized//-/_}"
-  linker_var="CARGO_TARGET_${normalized}_LINKER"
-  if [[ -z "${!linker_var:-}" ]]; then
-    declare -x "$linker_var"="rust-lld"
-  fi
-done
 
 for target in "${targets[@]}"; do
   arch="${target%%-*}"
