@@ -103,8 +103,8 @@ grep -q 'clippy' <<<"$toolchain_components" || fail "rust-toolchain.toml must pi
 if awk '
   $0 == "  verify-bundle:" {in_job=1; next}
   in_job && /^  [A-Za-z0-9_-]+:/ {in_job=0}
-  in_job && /^    needs:/ {exit 0}
-  END {exit 1}
+  in_job && /^    needs:/ {found=1}
+  END {exit !found}
 ' "$repo_root/.github/workflows/ci.yml"; then
   fail "CI job verify-bundle must not use needs: (a failed format check must not skip this attestation)"
 fi
