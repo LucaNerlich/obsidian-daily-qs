@@ -72,6 +72,17 @@ impl FenceScanner {
     }
 }
 
+/// Lines that are a fence marker or sit inside a fenced code block.
+///
+/// A checkbox-looking line in a code sample is not a todo. The read path, the
+/// heading filter and the insert placement all consult this mask so they agree
+/// on where the note's real todos are; otherwise the widget lists code lines,
+/// counts them, and writes new todos inside the fence.
+fn fence_mask(lines: &[&str]) -> Vec<bool> {
+    let mut scanner = FenceScanner::default();
+    lines.iter().map(|line| scanner.is_fenced(line)).collect()
+}
+
 /// Count indentation levels of a checkbox prefix: every tab is one level,
 /// every two spaces one level (matches Obsidian's list indentation).
 fn indent_level(indent: &str) -> usize {
@@ -88,11 +99,16 @@ fn indent_level(indent: &str) -> usize {
 /// and is treated as top-level.
 pub fn parse_todos(content: &str) -> Vec<TodoItem> {
     let re = checkbox_re();
+    let lines: Vec<&str> = content.lines().collect();
+    let fenced = fence_mask(&lines);
     let mut todos = Vec::new();
     // Line numbers of open ancestors, indexed by depth (stack[d] has depth d).
     let mut stack: Vec<usize> = Vec::new();
     let mut last_depth = 0usize;
-    for (idx, line) in content.lines().enumerate() {
+    for (idx, line) in lines.iter().enumerate() {
+        if fenced[idx] {
+            continue;
+        }
         let Some(caps) = re.captures(line) else {
             continue;
         };
@@ -173,12 +189,15 @@ fn filter_todos_by_heading(
     };
     let want_l = want.to_lowercase();
     let lines: Vec<&str> = content.lines().collect();
+    let fenced = fence_mask(&lines);
     let heading_re = any_heading_re();
     // Inclusive start / exclusive end as 1-based file line numbers.
     let mut ranges: Vec<(usize, usize)> = Vec::new();
     let mut i = 0usize;
     while i < lines.len() {
-        if let Some(caps) = heading_re.captures(lines[i]) {
+        if !fenced[i]
+            && let Some(caps) = heading_re.captures(lines[i])
+        {
             let level = caps[1].len();
             let title = caps[2].trim().to_lowercase();
             if title == want_l {
@@ -186,7 +205,8 @@ fn filter_todos_by_heading(
                 let start = i + 2;
                 let mut j = i + 1;
                 while j < lines.len() {
-                    if let Some(next) = heading_re.captures(lines[j])
+                    if !fenced[j]
+                        && let Some(next) = heading_re.captures(lines[j])
                         && next[1].len() <= level
                     {
                         break;
@@ -1163,14 +1183,15 @@ fn apply_style_from_content(
     heading_gap_known: &mut bool,
 ) -> bool {
     let lines: Vec<&str> = content.lines().collect();
-    let Some((start, end)) = first_todo_region(&lines, 0, lines.len()) else {
+    let fenced = fence_mask(&lines);
+    let Some((start, end)) = first_todo_region(&lines, &fenced, 0, lines.len()) else {
         return false;
     };
     if !*heading_gap_known {
         style.blank_after_heading = start > 0 && lines[start - 1].trim().is_empty();
         *heading_gap_known = true;
     }
-    if !*compact_known && let Some(compact) = compact_between(&lines, start, end) {
+    if !*compact_known && let Some(compact) = compact_between(&lines, &fenced, start, end) {
         style.compact = compact;
         *compact_known = true;
     }
@@ -1201,12 +1222,20 @@ fn skip_frontmatter(lines: &[&str]) -> usize {
 
 /// First checkbox run in `[from, to)`, including single blank lines between
 /// items. Stops at headings, paragraphs, or other non-todo content.
-fn first_todo_region(lines: &[&str], from: usize, to: usize) -> Option<(usize, usize)> {
+fn first_todo_region(
+    lines: &[&str],
+    fenced: &[bool],
+    from: usize,
+    to: usize,
+) -> Option<(usize, usize)> {
     let re = checkbox_re();
-    let start = (from..to).find(|&i| re.is_match(lines[i]))?;
+    let start = (from..to).find(|&i| !fenced[i] && re.is_match(lines[i]))?;
     let mut last = start;
     let mut i = start + 1;
     while i < to {
+        if fenced[i] {
+            break;
+        }
         if re.is_match(lines[i]) {
             last = i;
             i += 1;
@@ -1223,14 +1252,14 @@ fn first_todo_region(lines: &[&str], from: usize, to: usize) -> Option<(usize, u
 
 /// `true` when at least one adjacent todo pair has no blank line between them.
 /// `None` when the range has fewer than two checkboxes.
-fn compact_between(lines: &[&str], start: usize, end: usize) -> Option<bool> {
+fn compact_between(lines: &[&str], fenced: &[bool], start: usize, end: usize) -> Option<bool> {
     let re = checkbox_re();
     let mut prev: Option<usize> = None;
     let mut dense = false;
     let mut spaced = false;
     let mut count = 0usize;
     for i in start..end {
-        if !re.is_match(lines[i]) {
+        if fenced[i] || !re.is_match(lines[i]) {
             continue;
         }
         count += 1;
@@ -1282,6 +1311,7 @@ fn insert_todo_lines(
     let default_heading = tasks_heading_re();
     let any_heading = any_heading_re();
     let lines: Vec<&str> = content.lines().collect();
+    let fenced = fence_mask(&lines);
     let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
 
     // A configured heading wins when it names an existing section. A blank
@@ -1290,8 +1320,8 @@ fn insert_todo_lines(
     if let Some(want) = heading.map(str::trim).filter(|s| !s.is_empty())
         && let Some((sec_start, sec_end)) = custom_section_bounds(&lines, want, &any_heading)
     {
-        let compact = first_todo_region(&lines, sec_start, sec_end)
-            .and_then(|(start, end)| compact_between(&lines, start, end))
+        let compact = first_todo_region(&lines, &fenced, sec_start, sec_end)
+            .and_then(|(start, end)| compact_between(&lines, &fenced, start, end))
             .unwrap_or(style.compact);
         let (at, needs_boundary_blank) = tasks_section_insert_at(&lines, sec_start, sec_end);
         let after = insert_items(&mut out, at, items, compact);
@@ -1303,8 +1333,8 @@ fn insert_todo_lines(
 
     if let Some((sec_start, sec_end)) = tasks_section_bounds(&lines, &default_heading, &any_heading)
     {
-        let compact = first_todo_region(&lines, sec_start, sec_end)
-            .and_then(|(start, end)| compact_between(&lines, start, end))
+        let compact = first_todo_region(&lines, &fenced, sec_start, sec_end)
+            .and_then(|(start, end)| compact_between(&lines, &fenced, start, end))
             .unwrap_or(style.compact);
         let (at, needs_boundary_blank) = tasks_section_insert_at(&lines, sec_start, sec_end);
         let after = insert_items(&mut out, at, items, compact);
@@ -1314,8 +1344,8 @@ fn insert_todo_lines(
         return finish_body(out);
     }
 
-    if let Some((start, end)) = first_todo_region(&lines, 0, lines.len()) {
-        let compact = compact_between(&lines, start, end).unwrap_or(style.compact);
+    if let Some((start, end)) = first_todo_region(&lines, &fenced, 0, lines.len()) {
+        let compact = compact_between(&lines, &fenced, start, end).unwrap_or(style.compact);
         let after = insert_items(&mut out, end, items, compact);
         ensure_blank_before_following(&mut out, after);
         return finish_body(out);
@@ -1951,6 +1981,50 @@ mod tests {
         assert_eq!(
             ybody, "- [ ] water\n",
             "the parent must survive with its child removed: {ybody:?}"
+        );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn fenced_checkboxes_are_not_listed_or_counted() {
+        let (vault, today, _) =
+            vault_with("# Day\n\n```md\n- [ ] sample\n- [x] done-sample\n```\n\n- [ ] real\n");
+        let snap = read_snapshot(&vault, today).unwrap();
+        assert_eq!(
+            snap.open_count,
+            Some(1),
+            "a fenced open checkbox was counted"
+        );
+        assert_eq!(
+            snap.done_count,
+            Some(0),
+            "a fenced done checkbox was counted"
+        );
+        let texts: Vec<String> = snap.todos.unwrap().into_iter().map(|t| t.text).collect();
+        assert_eq!(texts, vec!["real".to_string()]);
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn heading_filter_skips_fenced_lines() {
+        // A fence inside the section must not become part of the todo run, and
+        // a heading-looking line inside it must not end the section.
+        let content = "# Day\n\n## Tasks\n\n```\n# Not a heading\n- [ ] fenced\n```\n\n- [ ] real\n\n# Later\n\n- [ ] outside\n";
+        let filtered = filter_todos_by_heading(content, parse_todos(content), Some("Tasks"));
+        let texts: Vec<&str> = filtered.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(texts, vec!["real"], "got {texts:?}");
+    }
+
+    #[test]
+    fn add_without_a_heading_inserts_outside_a_fence() {
+        let (vault, today, note) = vault_with("# Day\n\n```\n- [ ] sample\n```\n");
+        add_todo_under(&vault, today, "new", None, None).unwrap();
+        let body = fs::read_to_string(&note).unwrap();
+        let new_pos = body.find("- [ ] new").expect("todo was not written");
+        let fence_pos = body.find("```").expect("fence disappeared");
+        assert!(
+            new_pos < fence_pos,
+            "the new todo was written inside/after the fence: {body:?}"
         );
         let _ = fs::remove_dir_all(vault.root());
     }
