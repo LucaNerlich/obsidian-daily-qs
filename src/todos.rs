@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use chrono::NaiveDate;
 use regex::Regex;
@@ -11,22 +12,37 @@ use crate::config::{DailyNotesConfig, Vault, VaultError};
 use crate::open;
 use crate::status::{Snapshot, TodoItem};
 
-fn checkbox_re() -> Regex {
-    Regex::new(r"^(\s*)([-*+])\s+\[([ xX])\](\s+)(.*)$").expect("checkbox regex")
-}
+// Compiled once per process. These are used on every parse and on every
+// candidate day of the carry-over/style lookbacks, so rebuilding them per call
+// meant dozens of compilations per poll of the always-on bar widget.
 
-fn tasks_heading_re() -> Regex {
+static CHECKBOX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\s*)([-*+])\s+\[([ xX])\](\s+)(.*)$").expect("checkbox regex"));
+
+static TASKS_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Accept both "Tasks" and "Todos" headings (case-insensitive).
     Regex::new(r"(?i)^#{1,6}\s+(tasks|todos)\s*$").expect("tasks heading regex")
-}
+});
 
 /// Matcher for markdown ATX headings (up to 3 leading spaces, optional closing
 /// hashes). Shared by the heading filter and the insert path so both agree on
 /// which lines delimit a section — previously the read side had its own,
 /// stricter pattern, so `  ## Tasks` or `# Tasks #` was a section to insert
 /// into but not one to display.
-fn any_heading_re() -> Regex {
+static ANY_HEADING_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$").expect("heading regex")
+});
+
+fn checkbox_re() -> &'static Regex {
+    &CHECKBOX_RE
+}
+
+fn tasks_heading_re() -> &'static Regex {
+    &TASKS_HEADING_RE
+}
+
+fn any_heading_re() -> &'static Regex {
+    &ANY_HEADING_RE
 }
 
 #[derive(Default)]
@@ -238,7 +254,7 @@ fn enrich_snapshot(
     snap.obsidian_uri = Some(open::open_uri(vault.root(), path));
     let today = chrono::Local::now().date_naive();
     snap.is_today = Some(date == today);
-    snap.carry_over_count = Some(carry_source_count(vault, date)?.unwrap_or(0));
+    snap.carry_over_count = Some(carry_source_count(vault, config, date)?.unwrap_or(0));
     if let Some(name) = config.template.clone() {
         snap.template_name = Some(name);
         let has_template = vault.template_path(config).is_some_and(|p| p.exists());
@@ -255,12 +271,16 @@ const CARRY_OVER_LOOKBACK_DAYS: u64 = 30;
 /// Open count of the most recent previous day before `date` that still holds
 /// open todos (the "last found" daily note), or `None` when no such note
 /// exists in the lookback window.
-fn carry_source(vault: &Vault, date: NaiveDate) -> Result<Option<(NaiveDate, usize)>, VaultError> {
+fn carry_source(
+    vault: &Vault,
+    config: &DailyNotesConfig,
+    date: NaiveDate,
+) -> Result<Option<(NaiveDate, usize)>, VaultError> {
     for offset in 1..=CARRY_OVER_LOOKBACK_DAYS {
         let Some(prev) = date.checked_sub_days(chrono::Days::new(offset)) else {
             break;
         };
-        let count = open_todo_count(vault, prev)?;
+        let count = open_todo_count(vault, config, prev)?;
         if count > 0 {
             return Ok(Some((prev, count)));
         }
@@ -268,13 +288,20 @@ fn carry_source(vault: &Vault, date: NaiveDate) -> Result<Option<(NaiveDate, usi
     Ok(None)
 }
 
-fn carry_source_count(vault: &Vault, date: NaiveDate) -> Result<Option<usize>, VaultError> {
-    Ok(carry_source(vault, date)?.map(|(_, count)| count))
+fn carry_source_count(
+    vault: &Vault,
+    config: &DailyNotesConfig,
+    date: NaiveDate,
+) -> Result<Option<usize>, VaultError> {
+    Ok(carry_source(vault, config, date)?.map(|(_, count)| count))
 }
 
-fn open_todo_count(vault: &Vault, date: NaiveDate) -> Result<usize, VaultError> {
-    let config = vault.daily_notes_config()?;
-    let path = resolved_note_path(vault, &config, date)?;
+fn open_todo_count(
+    vault: &Vault,
+    config: &DailyNotesConfig,
+    date: NaiveDate,
+) -> Result<usize, VaultError> {
+    let path = resolved_note_path(vault, config, date)?;
     if !path.exists() {
         return Ok(0);
     }
@@ -288,9 +315,12 @@ struct OpenTodo {
     text: String,
 }
 
-fn open_todo_items(vault: &Vault, date: NaiveDate) -> Result<Vec<OpenTodo>, VaultError> {
-    let config = vault.daily_notes_config()?;
-    let path = resolved_note_path(vault, &config, date)?;
+fn open_todo_items(
+    vault: &Vault,
+    config: &DailyNotesConfig,
+    date: NaiveDate,
+) -> Result<Vec<OpenTodo>, VaultError> {
+    let path = resolved_note_path(vault, config, date)?;
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -334,10 +364,10 @@ fn move_open_from_previous(
     let config = vault.daily_notes_config()?;
     let path = resolved_note_path(vault, &config, date)?;
     create_note_if_missing(vault, &config, &path, date)?;
-    let Some((prev, _)) = carry_source(vault, date)? else {
+    let Some((prev, _)) = carry_source(vault, &config, date)? else {
         return Ok(0);
     };
-    let items = open_todo_items(vault, prev)?;
+    let items = open_todo_items(vault, &config, prev)?;
     if items.is_empty() {
         return Ok(0);
     }
@@ -475,16 +505,7 @@ fn remove_todos(
     if drop.is_empty() {
         return Ok(());
     }
-    let kept: Vec<&str> = content
-        .lines()
-        .enumerate()
-        .filter(|(i, _)| !drop.contains(&(i + 1)))
-        .map(|(_, line)| line)
-        .collect();
-    let mut next = kept.join("\n");
-    if content.ends_with('\n') && !next.is_empty() {
-        next.push('\n');
-    }
+    let next = without_lines(&content, &drop);
     write_atomic(vault.root(), &path, &next)
 }
 
@@ -628,16 +649,8 @@ pub fn add_todo_under(
             let insert_at = parent_line; // insert after this 1-based line
             let new_line = format!("{}- [ ] {}", "  ".repeat(depth), text);
             let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-            if insert_at > lines.len() {
-                return Err(VaultError::Io(format!(
-                    "under-line {parent_line} is past end of file"
-                )));
-            }
             lines.insert(insert_at, new_line);
-            let mut next = lines.join("\n");
-            if content.ends_with('\n') && !next.ends_with('\n') {
-                next.push('\n');
-            }
+            let next = join_body(&content, &lines);
             write_atomic_with_undo(vault, date, &path, &content, &next)?;
         }
     }
@@ -713,7 +726,7 @@ fn add_checkbox_lines(
     let content = fs::read_to_string(&path)
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     let lines = format_checkbox_lines(items);
-    let style = infer_todo_style(vault, date, &content);
+    let style = infer_todo_style(vault, &config, date, &content);
     let next = insert_todo_lines(&content, &lines, style, heading);
     if rollover {
         write_atomic_with_undo(vault, date, &path, &content, &next)
@@ -802,7 +815,7 @@ pub fn edit_todo(
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     expect_line_text(&content, line, expect_text)?;
     let re = checkbox_re();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
     let idx = line - 1;
     if idx >= lines.len() {
         return Err(VaultError::Io(format!("line {line} is past end of file")));
@@ -811,14 +824,11 @@ pub fn edit_todo(
     let caps = re
         .captures(&lines[idx])
         .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
-    lines[idx] = format!(
+    let new_line = format!(
         "{}{} [{}]{}{}",
         &caps[1], &caps[2], &caps[3], &caps[4], new_text
     );
-    let mut next = lines.join("\n");
-    if content.ends_with('\n') && !next.ends_with('\n') {
-        next.push('\n');
-    }
+    let next = rewrite_line(&content, line, &new_line);
     write_atomic_with_undo(vault, date, &path, &content, &next)?;
     read_snapshot(vault, date)
 }
@@ -860,16 +870,7 @@ pub fn delete_todo(
             drop.insert(t.line);
         }
     }
-    let kept: Vec<&str> = content
-        .lines()
-        .enumerate()
-        .filter(|(i, _)| !drop.contains(&(i + 1)))
-        .map(|(_, line)| line)
-        .collect();
-    let mut next = kept.join("\n");
-    if content.ends_with('\n') && !next.is_empty() {
-        next.push('\n');
-    }
+    let next = without_lines(&content, &drop);
     write_atomic_with_undo(vault, date, &path, &content, &next)?;
     read_snapshot(vault, date)
 }
@@ -945,9 +946,6 @@ pub fn defer_todo_to(
         .filter(|t| drop.contains(&t.line))
         .map(|t| (t.depth, t.checked, t.text))
         .collect();
-    if moving.is_empty() {
-        return Err(VaultError::Io(format!("line {line} is not a todo")));
-    }
     let base_depth = moving[0].0;
     for item in &mut moving {
         item.0 = item.0.saturating_sub(base_depth);
@@ -995,7 +993,7 @@ pub fn defer_todo_to(
     let dest_next = insert_todo_lines(
         &dest_content,
         &format_checkbox_lines(&moving),
-        infer_todo_style(vault, next_date, &dest_content),
+        infer_todo_style(vault, &config, next_date, &dest_content),
         heading,
     );
     if let Err(e) = write_atomic(vault.root(), &dest_path, &dest_next) {
@@ -1006,16 +1004,7 @@ pub fn defer_todo_to(
         return Err(e);
     }
 
-    let kept: Vec<&str> = content
-        .lines()
-        .enumerate()
-        .filter(|(i, _)| !drop.contains(&(i + 1)))
-        .map(|(_, line)| line)
-        .collect();
-    let mut next = kept.join("\n");
-    if content.ends_with('\n') && !next.is_empty() {
-        next.push('\n');
-    }
+    let next = without_lines(&content, &drop);
     if let Err(e) = write_atomic(vault.root(), &path, &next) {
         // Roll the destination back so a failed defer never duplicates.
         match dest_before {
@@ -1057,7 +1046,7 @@ pub fn set_indent(
         .map_err(|e| VaultError::Io(format!("failed to read {}: {e}", path.display())))?;
     expect_line_text(&content, line, expect_text)?;
     let re = checkbox_re();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
     let idx = line - 1;
     if idx >= lines.len() {
         return Err(VaultError::Io(format!("line {line} is past end of file")));
@@ -1069,14 +1058,11 @@ pub fn set_indent(
     let mut level = indent_level(&caps[1]) as i32;
     level = (level + delta).max(0);
     let indent = "  ".repeat(level as usize);
-    lines[idx] = format!(
+    let new_line = format!(
         "{}{} [{}]{}{}",
         indent, &caps[2], &caps[3], &caps[4], &caps[5]
     );
-    let mut next = lines.join("\n");
-    if content.ends_with('\n') && !next.ends_with('\n') {
-        next.push('\n');
-    }
+    let next = rewrite_line(&content, line, &new_line);
     write_atomic_with_undo(vault, date, &path, &content, &next)?;
     read_snapshot(vault, date)
 }
@@ -1134,7 +1120,12 @@ pub fn write_atomic_public(
     write_atomic(vault_root, path, content)
 }
 
-fn infer_todo_style(vault: &Vault, date: NaiveDate, current: &str) -> TodoStyle {
+fn infer_todo_style(
+    vault: &Vault,
+    config: &DailyNotesConfig,
+    date: NaiveDate,
+    current: &str,
+) -> TodoStyle {
     let mut style = DEFAULT_TODO_STYLE;
     let mut compact_known = false;
     let mut heading_gap_known = false;
@@ -1152,7 +1143,7 @@ fn infer_todo_style(vault: &Vault, date: NaiveDate, current: &str) -> TodoStyle 
         let Some(prev) = date.checked_sub_days(chrono::Days::new(offset)) else {
             break;
         };
-        let Some(body) = note_body(vault, prev) else {
+        let Some(body) = note_body(vault, config, prev) else {
             continue;
         };
         if apply_style_from_content(
@@ -1169,9 +1160,8 @@ fn infer_todo_style(vault: &Vault, date: NaiveDate, current: &str) -> TodoStyle 
     style
 }
 
-fn note_body(vault: &Vault, date: NaiveDate) -> Option<String> {
-    let config = vault.daily_notes_config().ok()?;
-    let path = resolved_note_path(vault, &config, date).ok()?;
+fn note_body(vault: &Vault, config: &DailyNotesConfig, date: NaiveDate) -> Option<String> {
+    let path = resolved_note_path(vault, config, date).ok()?;
     if !path.exists() {
         return None;
     }
@@ -1320,7 +1310,7 @@ fn insert_todo_lines(
     // or missing heading falls through to the default placement below, so
     // existing notes keep their behavior.
     if let Some(want) = heading.map(str::trim).filter(|s| !s.is_empty())
-        && let Some((sec_start, sec_end)) = custom_section_bounds(&lines, want, &any_heading)
+        && let Some((sec_start, sec_end)) = custom_section_bounds(&lines, want, any_heading)
     {
         let compact = first_todo_region(&lines, &fenced, sec_start, sec_end)
             .and_then(|(start, end)| compact_between(&lines, &fenced, start, end))
@@ -1333,8 +1323,7 @@ fn insert_todo_lines(
         return finish_body(out);
     }
 
-    if let Some((sec_start, sec_end)) = tasks_section_bounds(&lines, &default_heading, &any_heading)
-    {
+    if let Some((sec_start, sec_end)) = tasks_section_bounds(&lines, default_heading, any_heading) {
         let compact = first_todo_region(&lines, &fenced, sec_start, sec_end)
             .and_then(|(start, end)| compact_between(&lines, &fenced, start, end))
             .unwrap_or(style.compact);
@@ -1462,6 +1451,37 @@ fn tasks_section_insert_at(
     (at, needs_boundary_blank)
 }
 
+/// Re-join a body's lines, preserving the file's trailing-newline byte: a body
+/// that ended with a blank line keeps it. Every mutation used to inline this
+/// with one of two slightly different guards, so `toggle`/`edit`/`indent`/
+/// `add --under-line` silently dropped that final blank line while
+/// `delete`/`defer` kept it.
+fn join_body(content: &str, lines: &[String]) -> String {
+    let mut next = lines.join("\n");
+    if content.ends_with('\n') && !next.is_empty() {
+        next.push('\n');
+    }
+    next
+}
+
+/// Rewrite one 1-based line, leaving every other byte as it was.
+fn rewrite_line(content: &str, line: usize, new_line: &str) -> String {
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    lines[line - 1] = new_line.to_string();
+    join_body(content, &lines)
+}
+
+/// Drop the given 1-based lines, leaving every other byte as it was.
+fn without_lines(content: &str, drop: &std::collections::HashSet<usize>) -> String {
+    let lines: Vec<String> = content
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| !drop.contains(&(i + 1)))
+        .map(|(_, line)| line.to_string())
+        .collect();
+    join_body(content, &lines)
+}
+
 fn finish_body(out: Vec<String>) -> String {
     let mut body = out.join("\n");
     if !body.ends_with('\n') {
@@ -1486,7 +1506,7 @@ fn reject_fenced_line(content: &str, line: usize) -> Result<(), VaultError> {
 
 fn toggle_line(content: &str, line: usize) -> Result<String, VaultError> {
     let re = checkbox_re();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
     let idx = line - 1;
     if idx >= lines.len() {
         return Err(VaultError::Io(format!(
@@ -1501,15 +1521,11 @@ fn toggle_line(content: &str, line: usize) -> Result<String, VaultError> {
         .ok_or_else(|| VaultError::Io(format!("line {line} is not a checkbox todo")))?;
     let checked = !caps[3].eq(" ");
     let mark = if checked { " " } else { "x" };
-    lines[idx] = format!(
+    let new_line = format!(
         "{}{} [{}]{}{}",
         &caps[1], &caps[2], mark, &caps[4], &caps[5]
     );
-    let mut body = lines.join("\n");
-    if content.ends_with('\n') && !body.ends_with('\n') {
-        body.push('\n');
-    }
-    Ok(body)
+    Ok(rewrite_line(content, line, &new_line))
 }
 
 /// Create `dir` and any missing parents after verifying its existing
@@ -2031,6 +2047,40 @@ mod tests {
     }
 
     #[test]
+    fn mutations_keep_the_trailing_blank_line() {
+        // The two variants of the trailing-newline guard meant some commands
+        // silently dropped a note's final blank line. Every mutation must leave
+        // the tail byte-identical.
+        let body = "# Day\n\n- [ ] a\n\n";
+        let check = |label: &str, after: String| {
+            assert!(
+                after.ends_with("\n\n"),
+                "{label} dropped the trailing blank line: {after:?}"
+            );
+        };
+
+        let (vault, today, note) = vault_with(body);
+        toggle_todo(&vault, today, 3, None).unwrap();
+        check("toggle", fs::read_to_string(&note).unwrap());
+        let _ = fs::remove_dir_all(vault.root());
+
+        let (vault, today, note) = vault_with(body);
+        edit_todo(&vault, today, 3, None, "b").unwrap();
+        check("edit", fs::read_to_string(&note).unwrap());
+        let _ = fs::remove_dir_all(vault.root());
+
+        let (vault, today, note) = vault_with(body);
+        set_indent(&vault, today, 3, None, 1).unwrap();
+        check("indent", fs::read_to_string(&note).unwrap());
+        let _ = fs::remove_dir_all(vault.root());
+
+        let (vault, today, note) = vault_with(body);
+        add_todo_under(&vault, today, "child", Some(3), None).unwrap();
+        check("add --under-line", fs::read_to_string(&note).unwrap());
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
     fn fenced_checkboxes_are_not_listed_or_counted() {
         let (vault, today, _) =
             vault_with("# Day\n\n```md\n- [ ] sample\n- [x] done-sample\n```\n\n- [ ] real\n");
@@ -2095,6 +2145,44 @@ mod tests {
             1,
             "the target must not gain a duplicate: {target:?}"
         );
+        let _ = fs::remove_dir_all(vault.root());
+    }
+
+    #[test]
+    fn out_of_range_line_numbers_are_rejected_without_touching_the_note() {
+        // `rewrite_line` indexes `line - 1` directly, so its safety rests on
+        // every caller validating first. That contract needs a test: a future
+        // call site that forgets it would turn a clean `Err` into a panic in an
+        // always-on backend.
+        let body = "# Day\n\n- [ ] a\n";
+        let (vault, today, note) = vault_with(body);
+        for line in [0usize, 99] {
+            assert!(
+                toggle_todo(&vault, today, line, None).is_err(),
+                "toggle {line}"
+            );
+            assert!(
+                edit_todo(&vault, today, line, None, "x").is_err(),
+                "edit {line}"
+            );
+            assert!(
+                set_indent(&vault, today, line, None, 1).is_err(),
+                "indent {line}"
+            );
+            assert!(
+                delete_todo(&vault, today, line, None, false).is_err(),
+                "delete {line}"
+            );
+            assert!(
+                defer_todo(&vault, today, line, None, false, None).is_err(),
+                "defer {line}"
+            );
+            assert_eq!(
+                fs::read_to_string(&note).unwrap(),
+                body,
+                "line {line} changed the note"
+            );
+        }
         let _ = fs::remove_dir_all(vault.root());
     }
 
