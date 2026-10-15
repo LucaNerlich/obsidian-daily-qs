@@ -91,10 +91,6 @@ pub struct WeekSummary {
 }
 
 impl Snapshot {
-    pub fn error(message: impl Into<String>) -> Self {
-        Self::error_with_code(message, "io")
-    }
-
     pub fn error_with_code(message: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             state: State::Error,
@@ -204,7 +200,8 @@ mod tests {
 
     #[test]
     fn serializes_error_snapshot() {
-        let json = serde_json::to_string(&Snapshot::error("missing vault")).unwrap();
+        let json =
+            serde_json::to_string(&Snapshot::error_with_code("missing vault", "io")).unwrap();
         assert!(json.contains(r#""state":"error""#));
         assert!(json.contains("missing vault"));
     }
