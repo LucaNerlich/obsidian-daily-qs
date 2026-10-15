@@ -1071,6 +1071,17 @@ pub fn week_summary(
     vault: &Vault,
     anchor: NaiveDate,
 ) -> Result<crate::status::WeekSummary, VaultError> {
+    week_summary_filtered(vault, anchor, None)
+}
+
+/// Like [`week_summary`], but when `heading` is set each day counts only the
+/// todos under a matching markdown heading — the same filter the day view
+/// uses, so the week strip cannot report work the panel says does not exist.
+pub fn week_summary_filtered(
+    vault: &Vault,
+    anchor: NaiveDate,
+    heading: Option<&str>,
+) -> Result<crate::status::WeekSummary, VaultError> {
     use crate::status::{DaySummary, WeekSummary};
     use chrono::Datelike;
     let today = chrono::Local::now().date_naive();
@@ -1083,7 +1094,7 @@ pub fn week_summary(
         let d = monday
             .checked_add_days(chrono::Days::new(offset))
             .unwrap_or(monday);
-        let snap = read_snapshot(vault, d)?;
+        let snap = read_snapshot_filtered(vault, d, heading)?;
         days.push(DaySummary {
             date: d.format("%Y-%m-%d").to_string(),
             open_count: snap.open_count.unwrap_or(0),

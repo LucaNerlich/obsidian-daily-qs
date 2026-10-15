@@ -135,7 +135,7 @@ omarchy bar set luca.obsidian-daily todoHeading Todos
 omarchy bar set luca.obsidian-daily insertHeading Inbox
 ```
 
-`todoHeading` filters which todos the bar and panel show. `insertHeading`
+`todoHeading` filters which todos the bar, panel and week strip show. `insertHeading`
 names the markdown heading new todos are added under (e.g. `Inbox`); when
 empty it follows `todoHeading`, and when both are empty new todos use the
 built-in `Tasks`/`Todos` placement. Missing headings fall back silently, so
@@ -164,6 +164,7 @@ obsidian-daily-qs indent --line 12
 obsidian-daily-qs outdent --line 12
 obsidian-daily-qs undo
 obsidian-daily-qs week
+obsidian-daily-qs week --heading Todos
 obsidian-daily-qs carry-over
 obsidian-daily-qs carry-over --heading Inbox
 obsidian-daily-qs open
