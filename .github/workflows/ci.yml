@@ -84,6 +84,9 @@ jobs:
       - name: Plugin model tests
         run: node omarchy/model.test.mjs
 
+      - name: Watch restart state-machine tests
+        run: node omarchy/watch-restart.test.mjs
+
   # No separate msrv job: rust-version in Cargo.toml is pinned to the same
   # 1.98.1 toolchain used everywhere else (rust-toolchain.toml), so a
   # dedicated "does it build on the declared minimum" job would just rebuild
