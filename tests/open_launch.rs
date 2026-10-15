@@ -18,7 +18,7 @@ impl Drop for Fixture {
 fn open_returns_while_desktop_handler_is_still_running() {
     let fixture =
         Fixture(std::env::temp_dir().join(format!("obsidian-open-launch-{}", std::process::id())));
-    fs::create_dir_all(fixture.0.join("vault")).unwrap();
+    fs::create_dir_all(fixture.0.join("vault/.obsidian")).unwrap();
     let launcher = fixture.0.join("xdg-open");
     fs::write(
         &launcher,
@@ -53,9 +53,18 @@ fn open_returns_while_desktop_handler_is_still_running() {
     let snapshot: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(snapshot["state"], "ok");
     assert_eq!(snapshot["exists"], true);
-    assert_eq!(
-        fs::read_to_string(fixture.0.join("uri")).unwrap(),
-        snapshot["obsidianUri"].as_str().unwrap()
+    let launched = fs::read_to_string(fixture.0.join("uri")).unwrap();
+    assert_eq!(launched, snapshot["obsidianUri"].as_str().unwrap());
+    // The point of the vault-relative form: what reaches argv must not contain
+    // the absolute path. Equality above would hold for either form, so assert
+    // the property itself.
+    assert!(
+        launched.starts_with("obsidian://open?vault="),
+        "expected the vault-relative form, got {launched}"
+    );
+    assert!(
+        !launched.contains(fixture.0.to_str().unwrap()),
+        "the fixture's absolute path leaked into argv: {launched}"
     );
     assert!(!fixture.0.join("exited").exists());
 
