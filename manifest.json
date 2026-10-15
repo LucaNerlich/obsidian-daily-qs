@@ -21,6 +21,7 @@
       "openOnly": false,
       "sortOrder": "default",
       "vaultPath": "",
+      "archiveFolder": "",
       "todoHeading": "",
       "insertHeading": "",
       "hideWhenDone": false,
@@ -40,6 +41,13 @@
         "label": "Open todos only",
         "description": "When the panel opens, hide completed checkboxes by default. Can still be toggled in the panel.",
         "defaultValue": false
+      },
+      {
+        "key": "archiveFolder",
+        "type": "string",
+        "label": "Archive folder",
+        "description": "Moment-style pattern for archived daily notes, relative to the vault (e.g. dailies/_archive/YYYY). A note moved there is still found and edited. Empty = disabled.",
+        "defaultValue": ""
       },
       {
         "key": "todoHeading",
