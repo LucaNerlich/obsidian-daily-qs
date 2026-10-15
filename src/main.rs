@@ -2,13 +2,14 @@
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use chrono::{Local, NaiveDate};
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 use obsidian_daily_qs::config::Vault;
-use obsidian_daily_qs::status::{Snapshot, WeekSummary};
+use obsidian_daily_qs::status::{Snapshot, State, WeekSummary};
 use obsidian_daily_qs::watch;
 use obsidian_daily_qs::{
     add_todo_under, carry_over, defer_todo, delete_todo, edit_todo, open_in_obsidian,
@@ -190,7 +191,7 @@ struct StdinFields {
     expect_text: Option<String>,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli = Cli::parse();
     let vault_arg = cli.vault.clone();
     let archive_arg = cli.archive_folder.clone();
@@ -202,7 +203,10 @@ fn main() {
             date,
         )),
         Command::Watch { heading } => {
-            watch::watch(cli.vault.clone(), cli.archive_folder.clone(), heading)
+            watch::watch(cli.vault.clone(), cli.archive_folder.clone(), heading);
+            // The restart heuristic watches the child, not its status; a
+            // long-running watch has no meaningful exit code to report.
+            ExitCode::SUCCESS
         }
         Command::Add {
             text,
@@ -334,7 +338,7 @@ fn main() {
                 },
                 Err(err) => WeekSummary::error(err.to_string(), err.error_code()),
             };
-            emit_json(&out);
+            emit_json(&out, matches!(out.state, State::Error))
         }
         Command::CarryOver { date, heading } => emit(run(
             vault_arg,
@@ -463,14 +467,27 @@ fn parse_date(date: Option<String>) -> Result<NaiveDate, String> {
     }
 }
 
-fn emit(snap: Snapshot) {
-    emit_json(&snap);
+fn emit(snap: Snapshot) -> ExitCode {
+    let failed = matches!(snap.state, State::Error);
+    emit_json(&snap, failed)
 }
 
-fn emit_json<T: serde::Serialize>(value: &T) {
+/// Write one JSON line to stdout and report the outcome as a process status.
+///
+/// A one-shot command that produced an error snapshot, or whose output did not
+/// reach the caller, must not exit 0: `cmd || fallback`, CI steps and shell
+/// wrappers would otherwise treat a failed mutation as success.
+fn emit_json<T: serde::Serialize>(value: &T, failed: bool) -> ExitCode {
     let line = serde_json::to_string(value).expect("serializes");
     let mut out = io::stdout().lock();
     if writeln!(out, "{line}").is_err() || out.flush().is_err() {
-        std::process::exit(0);
+        // Never panic on a closed stdout (see #12), but do not claim success
+        // either: the caller asked for output it did not receive.
+        return ExitCode::FAILURE;
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
