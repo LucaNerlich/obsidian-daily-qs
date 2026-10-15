@@ -73,11 +73,18 @@ holds note content must not be world-/group-readable under a typical umask
 
 ## Bundle rule — READ THIS, it breaks every release otherwise
 
-Any edit under `src/`, `Cargo.toml`, `Cargo.lock`, or `rust-toolchain.toml` requires a fresh `omarchy/bin/` bundle in the same change (`make verify-bundle` is the CI/release gate).
+The committed `omarchy/bin/` bundles are refreshed **only in the release PR**. Feature PRs leave `omarchy/bin/` alone: between releases the committed backend intentionally trails `src/`, because refreshing it on every Rust edit meant every merge to `main` re-conflicted every open PR on unmergeable binaries (a regenerated binary can never be merged three-way).
+
+`scripts/verify-bundle.sh` has two modes:
+
+- **Strict** — `make verify-bundle`, the tag Release workflow, any change that edits `omarchy/bin/**`, and any commit whose bundle is current: recorded hash, non-stripped/inspectable ELF, source fingerprint == `src/` + `Cargo.*` + the toolchain pin, and a byte-for-byte pinned rebuild.
+- **Stale-tolerant** — `ci.yml` for commits that leave `omarchy/bin/` alone (`VERIFY_BUNDLE_ALLOW_STALE=1`): the same integrity checks, but a fingerprint that trails the tree is reported, not fatal, and the rebuild is skipped — it can only pass while the fingerprint is current.
+
+When rebasing a branch that still carries old `chore: refresh marketplace bundle` commits, drop them: resolve the bundle conflicts with `main`'s side (e.g. `git checkout --ours -- omarchy/bin/` before `git rebase --continue`); the replayed commit collapses to empty, and the refresh happens in the release PR.
 
 **Never commit a cross-built `obsidian-daily-qs-aarch64` from an x86_64 host.** `make bundle` locally builds both arches, but the aarch64 output is cross-compiled with `rust-lld` and is NOT byte-identical to the native ARM build that CI (`ci.yml:verify-bundle`) and `release.yml` rebuild on `ubuntu-24.04-arm`. Result: `verify-bundle: bundled binary for aarch64 does not match the reproducible build`, Release skipped. x86_64 local builds are fine (native == CI).
 
-Correct flow for any Rust change:
+Refreshing the bundle (the release PR, or a change that deliberately edits `omarchy/bin/`):
 
 1. Build + commit only what you can attest locally:
    ```bash
@@ -98,10 +105,12 @@ Correct flow for any Rust change:
    chmod 755 omarchy/bin/obsidian-daily-qs-aarch64
    VERIFY_BUNDLE_SKIP_REBUILD=1 scripts/verify-bundle.sh aarch64-unknown-linux-musl
    ```
-4. Commit `omarchy/bin/obsidian-daily-qs-*{,.sha256}` + `.srcid` together with the Rust edit. Source fingerprint covers comments/whitespace — a comment-only `src/*.rs` edit still needs a rebuild.
+4. Commit `omarchy/bin/obsidian-daily-qs-*{,.sha256}` + `.srcid` with that change. Committing a stale bundle is only fine for changes that leave `omarchy/bin/` alone — CI reports it and skips the rebuild (see the modes above); a bundle-touching change must include a verified rebuild.
 
 ## Releasing (tag-driven)
 
 1. Bump `Cargo.toml`, `Cargo.lock` (via build), `manifest.json`, `CHANGELOG.md` (`[Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`).
-2. Refresh bundles per above, commit as `chore: release vX.Y.Z`, push to `main`.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z` — `release.yml` re-verifies both arches natively, then publishes the GitHub Release. Never move a published tag; fix forward and retag only if the release workflow hasn't published yet.
+2. Refresh the bundle in the release commit for the bumped source (only the release PR refreshes bundles), then commit as `chore: release vX.Y.Z`.
+3. `make verify-bundle` (strict) must pass on the release commit; `ci.yml` takes the same strict path because the commit edits `omarchy/bin/`.
+4. Push to `main`.
+5. `git tag vX.Y.Z && git push origin vX.Y.Z` — `release.yml` re-verifies both arches natively, then publishes the GitHub Release. Never move a published tag; fix forward and retag only if the release workflow hasn't published yet.

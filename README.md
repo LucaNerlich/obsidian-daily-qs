@@ -188,12 +188,12 @@ omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" omarchy/BarWidget.qml omarchy/Panel.qml
 ```
 
-`make bundle` rebuilds the musl backends for x86_64 and aarch64 into `omarchy/bin/` (Linux). `make verify-bundle` is the marketplace gate. Any edit under `src/`, `Cargo.toml`, `Cargo.lock`, or `rust-toolchain.toml` requires a fresh `make bundle` in the same change.
+`make bundle` rebuilds the musl backends for x86_64 and aarch64 into `omarchy/bin/` (Linux). `make verify-bundle` is the marketplace gate. The committed bundles are refreshed only in the release PR: feature PRs leave `omarchy/bin/` alone, and CI accepts a bundle that trails `src/` there (it verifies strictly whenever a change — or a tag — touches the bundle).
 
 ### Releasing
 
 1. Bump `Cargo.toml`, `Cargo.lock`, `manifest.json`, and `CHANGELOG.md`.
-2. Run `make bundle` then `make verify-bundle` on Linux.
+2. Refresh the bundle in the release PR (`make bundle` on Linux, or the native artifacts from the **Refresh marketplace bundle** workflow) and run `make verify-bundle`.
 3. Open a PR; wait for the **marketplace bundle** CI job to be green.
 4. Merge, then tag `vX.Y.Z` matching the crate version.
 

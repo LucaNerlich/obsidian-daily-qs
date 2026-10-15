@@ -9,6 +9,14 @@
 # tag-release workflow so a later release cannot skip any of those
 # attestations.
 #
+# Bundles are refreshed only in the release PR (AGENTS.md), so CI runs this
+# in two modes. With VERIFY_BUNDLE_ALLOW_STALE=1 a source fingerprint that
+# trails src/ is reported, not fatal, and the byte-for-byte rebuild is skipped
+# (it can only pass while the fingerprint is current); the recorded-hash and
+# inspectability attestations above still run. Every other caller — `make
+# verify-bundle`, the tag Release workflow, any change that edits
+# omarchy/bin/ — keeps the strict behavior.
+#
 # Usage: scripts/verify-bundle.sh [target-triple]
 #   With no argument, verifies (and rebuilds) all supported targets (used by
 #   `make verify-bundle` and the tag Release workflow).
@@ -34,6 +42,10 @@ fail() {
 }
 
 cd "$repo_root"
+
+# Set while a target's recorded source id trails the tree under
+# VERIFY_BUNDLE_ALLOW_STALE (see the header); read after the loop.
+stale=0
 
 verify_one() {
   local target="$1"
@@ -66,14 +78,26 @@ Run 'scripts/build-bundle.sh' and commit the binary, .sha256, and .srcid."
   [[ ${#recorded_srcid} -eq 64 ]] || fail "recorded source id in $srcid_file is not a SHA-256"
   actual_srcid="$("$repo_root/scripts/bundle-source-id.sh")"
   if [[ "$recorded_srcid" != "$actual_srcid" ]]; then
-    fail "committed ELF is stale relative to the tracked Rust source
+    if [[ "${VERIFY_BUNDLE_ALLOW_STALE:-}" == 1 ]]; then
+      # Bundles are refreshed only in the release PR (AGENTS.md), so CI
+      # accepts a trailing fingerprint for commits that leave omarchy/bin/
+      # alone. The recorded hash and the inspectability checks above still
+      # ran, and the rebuild below is skipped: it can only pass while the
+      # fingerprint is current.
+      stale=1
+      echo "verify-bundle: committed ELF trails the tracked source by design; the rebuild is deferred to the release PR" >&2
+      echo "  recorded source id: $recorded_srcid" >&2
+      echo "  current source id:  $actual_srcid" >&2
+    else
+      fail "committed ELF is stale relative to the tracked Rust source
   recorded source id: $recorded_srcid
   current source id:  $actual_srcid
 
 Comments, docs, and whitespace in src/*.rs all count: rustc hashes them
-into symbol names (the crate disambiguator). Run 'scripts/build-bundle.sh'
-and commit omarchy/bin/obsidian-daily-qs-*{,.sha256} and .srcid in the same
-change as the Rust edit."
+into symbol names (the crate disambiguator). Bundles are refreshed in the
+release PR; a change that edits omarchy/bin/ must run 'scripts/build-bundle.sh'
+and commit omarchy/bin/obsidian-daily-qs-*{,.sha256} and .srcid with it."
+    fi
   fi
 
   file_out="$(file -b "$bin")"
@@ -144,6 +168,11 @@ fi
 for target in "${targets[@]}"; do
   verify_one "$target"
 done
+
+if [[ "$stale" == 1 ]]; then
+  echo "verified: committed ELFs are non-stripped, version $crate_version; bundle is stale by design (rebuild skipped)"
+  exit 0
+fi
 
 if [[ "${VERIFY_BUNDLE_SKIP_REBUILD:-}" == 1 ]]; then
   echo "verified: committed ELFs are non-stripped, version $crate_version (rebuild skipped)"
