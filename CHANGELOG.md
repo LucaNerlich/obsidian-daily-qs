@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] - 2026-10-15
+
+### Fixed
+
+- Panel text inputs no longer use editable Qt `TextField`s that auto-read the
+  Wayland clipboard on every ownership change (QTBUG-149610). Vault path,
+  search, edit, and add fields are a permanently read-only `GuardedTextField`
+  that types from key events and pastes only through a bounded `wl-paste`
+  process (2s / 64 KiB), so another clipboard provider cannot stall or grow
+  the shared shell without a paste action
+  ([marketplace #11653](https://github.com/omacom/omarchy-plugin-marketplace/issues/11653)).
+
 ## [1.13.0] - 2026-10-15
 
 ### Added
