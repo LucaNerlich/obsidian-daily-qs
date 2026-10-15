@@ -535,9 +535,15 @@ BarWidget {
         && (Date.now() - watchProc.startedAtMs) < watchProc.minHealthyRunMs
       if (!failedStart && !shortLived) {
         // Graceful backend exit (e.g. signal) — restart without latching.
+        // Still an exit we did not ask for, so surface it: `watch` only exits
+        // on a signal or EPIPE, and a watch that keeps dying after a long run
+        // must not be displayed as healthy for the whole retry delay. A
+        // deliberate stop returned above, so this cannot flash the bar on a
+        // settings change.
         watchProc.lastError = ""
         watchRestartTimer.interval = 5000
         watchRestartTimer.restart()
+        if (root.statusState !== "error") root.statusState = "error"
         return
       }
 
