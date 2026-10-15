@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
@@ -50,6 +50,11 @@ jobs:
     name: publish GitHub release
     needs: verify
     runs-on: ubuntu-latest
+    # Only this job publishes, so only this job needs to write. Declaring it
+    # per-job keeps `verify` — which builds third-party code and therefore runs
+    # untrusted build scripts — on a read-only token.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
