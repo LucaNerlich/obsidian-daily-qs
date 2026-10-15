@@ -152,8 +152,10 @@ obsidian-daily-qs watch
 obsidian-daily-qs add --text "Ship plugin"
 obsidian-daily-qs add --text "Inbox item" --heading Inbox
 obsidian-daily-qs add --text "Nested" --under-line 12
-# Widget path: pass sensitive fields on stdin so they never appear in argv
-printf '%s' '{"text":"Ship plugin"}' | obsidian-daily-qs add --stdin
+# Widget path: pass the private fields (vault root, archive pattern, todo
+# text) on stdin so they never appear in argv
+printf '%s' '{"vault":"/path/to/vault","text":"Ship plugin"}' | obsidian-daily-qs add --stdin
+printf '%s' '{"vault":"/path/to/vault"}' | obsidian-daily-qs watch --stdin
 obsidian-daily-qs toggle --line 12
 obsidian-daily-qs edit --line 12 --text "Renamed" --expect-text "Old"
 printf '%s' '{"text":"Renamed","expectText":"Old"}' | obsidian-daily-qs edit --line 12 --stdin
@@ -178,6 +180,24 @@ not a vault root, or the note is not inside it), it falls back to the absolute
 Pass sensitive todo text on stdin (`--stdin`) rather than `--text` for the same
 reason.
 
+The widget follows that rule for everything private: every backend process it
+launches (`watch`, `week`, `status` and all mutations) gets `--stdin` and one
+JSON object carrying `{"vault": …, "archiveFolder": …, "text"/"expectText": …}`.
+The absolute vault path is therefore absent from `/proc/<pid>/cmdline` even
+while the long-lived `watch` process runs. Verify on a machine with
+`hidepid=0` by opening the panel and checking that
+
+```bash
+ps -eo pid,args | grep obsidian-daily-qs
+```
+
+shows no `--vault` or `--archive-folder` argument; `omarchy/widget-argv.test.mjs`
+pins the same property against `omarchy/BarWidget.qml` in CI. The one exception
+is saving a *new* vault path from the panel's setup state: that calls
+`omarchy bar set … vaultPath <path>`, and omarchy's settings CLI accepts the
+value only as an argument — it is a brief, user-initiated save with the value
+you just typed, not a process that holds it for the session.
+
 ## Development
 
 ```bash
@@ -185,6 +205,7 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 node omarchy/model.test.mjs
+node omarchy/widget-argv.test.mjs
 omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" omarchy/BarWidget.qml omarchy/Panel.qml
 ```

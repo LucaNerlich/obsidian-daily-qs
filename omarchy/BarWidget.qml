@@ -43,9 +43,14 @@ BarWidget {
   readonly property bool watchBinaryExhausted: watchBundledFailed && watchFallbackFailed
   readonly property bool actionBinaryExhausted: actionBundledFailed && actionFallbackFailed
   property var pendingActionArgs: []
-  // JSON payload written to the action process stdin after start so todo
-  // text never appears in process arguments (/proc/<pid>/cmdline).
+  // JSON payloads written to each process's stdin after start. The vault
+  // root, the archive pattern and todo text travel here — never in process
+  // arguments, where /proc/<pid>/cmdline is readable by any local user on
+  // systems without hidepid, and where a watch process would hold the vault
+  // path for the whole session (AGENTS.md, #102).
   property string pendingActionStdin: ""
+  property string pendingWeekStdin: ""
+  property string pendingWatchStdin: ""
 
   readonly property string watchBinary: {
     if (!root.archSupported) return ""
@@ -128,13 +133,20 @@ BarWidget {
   readonly property bool conceal: Model.shouldConceal(status, hideWhenDone, hideWhenEmpty)
   readonly property color urgent: bar ? bar.urgent : Color.urgent
 
-  function vaultArgs() {
-    var args = []
+  // Private fields the backend reads from stdin. The vault root and archive
+  // pattern are settings too, so they ride the same channel as todo text:
+  // argv is world-readable without hidepid, and the watch process would keep
+  // the absolute vault path visible for its whole run (#102).
+  function privatePayload(fields) {
+    var payload = {}
+    var keys = fields ? Object.keys(fields) : []
+    for (var i = 0; i < keys.length; i++)
+      payload[keys[i]] = fields[keys[i]]
     if (root.vaultPath !== "")
-      args.push("--vault", root.vaultPath)
+      payload.vault = root.vaultPath
     if (root.archiveFolder !== "")
-      args.push("--archive-folder", root.archiveFolder)
-    return args
+      payload.archiveFolder = root.archiveFolder
+    return JSON.stringify(payload)
   }
 
   function headingArgs() {
@@ -156,10 +168,6 @@ BarWidget {
     return args
   }
 
-  function withVault(args) {
-    return root.vaultArgs().concat(args)
-  }
-
   function restartWatch() {
     // Only mark it deliberate when an exit will actually follow. If the watch
     // is already stopped, nothing consumes the flag and a later real crash
@@ -173,6 +181,12 @@ BarWidget {
   function saveVaultPath(path) {
     var expanded = Model.expandPath(path, root.homeDir)
     if (expanded === "") return
+    // The one launch that still carries the path in argv, and only while the
+    // save runs: omarchy's settings CLI takes the value as an argument
+    // (bin/omarchy-bar has no stdin channel), and it is the supported way to
+    // write the setting. The long-lived watch/week/action launches all take
+    // the vault on stdin instead (#102). Saving is user-initiated from the
+    // setup state, with the value the user just typed.
     settingsProc.command = ["omarchy", "bar", "set", "luca.obsidian-daily", "vaultPath", expanded]
     settingsProc.running = true
   }
@@ -235,16 +249,19 @@ BarWidget {
     root.applyViewParsed(parsed)
   }
 
-  function runAction(args, stdinPayload) {
+  // Launch one backend action. `fields` carries the command's todo fields
+  // (text/expectText); the private payload (with the vault root and archive
+  // pattern) and the --stdin flag are added here so no caller can forget
+  // either.
+  function runAction(args, fields) {
     if (!args || !args.length) return
-    var stdin = typeof stdinPayload === "string" ? stdinPayload : ""
     if (actionProc.running) {
-      root.actionQueue.push({ args: args, stdin: stdin })
+      root.actionQueue.push({ args: args, fields: fields })
       return
     }
-    var full = root.withVault(args)
+    var full = args.concat(["--stdin"])
     root.pendingActionArgs = full
-    root.pendingActionStdin = stdin
+    root.pendingActionStdin = root.privatePayload(fields)
     actionProc.retried = false
     actionProc.lastError = ""
     // stdinEnabled must be true before start; write() is a no-op otherwise.
@@ -258,19 +275,15 @@ BarWidget {
     if (root.actionQueue.length === 0) return
     var next = root.actionQueue.shift()
     if (next && next.args)
-      runAction(next.args, next.stdin || "")
+      runAction(next.args, next.fields || null)
     else
       runAction(next)
-  }
-
-  function secretFieldsPayload(fields) {
-    return JSON.stringify(fields || {})
   }
 
   function refreshView() {
     var d = root.viewDate || Model.todayIso()
     root.viewDate = d
-    root.runAction(["status", "--date", d].concat(root.headingArgs()))
+    root.runAction(["status", "--date", d].concat(root.headingArgs()), null)
     root.refreshWeek()
   }
 
@@ -279,8 +292,10 @@ BarWidget {
     // Same heading filter as the day view: an unfiltered week strip counts
     // checkboxes the panel (correctly) hides and contradicts the day counts
     // right next to it (#62).
+    root.pendingWeekStdin = root.privatePayload(null)
+    weekProc.stdinEnabled = true
     weekProc.command = [root.actionBinary].concat(
-      root.withVault(["week", "--date", d].concat(root.headingArgs())))
+      ["week", "--date", d].concat(root.headingArgs()).concat(["--stdin"]))
     weekProc.running = true
   }
 
@@ -307,11 +322,11 @@ BarWidget {
     var trimmed = String(text || "").trim()
     if (trimmed === "") return
     var d = root.viewDate || Model.todayIso()
-    var args = ["add", "--date", d, "--stdin"].concat(root.insertHeadingArgs())
+    var args = ["add", "--date", d].concat(root.insertHeadingArgs())
     var n = Number(underLine)
     if (isFinite(n) && n >= 1)
       args.push("--under-line", String(Math.floor(n)))
-    root.runAction(args, root.secretFieldsPayload({ text: trimmed }))
+    root.runAction(args, { text: trimmed })
   }
 
   function toggleTodo(line, text) {
@@ -319,12 +334,8 @@ BarWidget {
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
     var args = ["toggle", "--date", d, "--line", String(Math.floor(n))]
-    var stdin = ""
-    if (typeof text === "string" && text !== "") {
-      args.push("--stdin")
-      stdin = root.secretFieldsPayload({ expectText: text })
-    }
-    root.runAction(args, stdin)
+    var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
+    root.runAction(args, fields)
   }
 
   function editTodo(line, expectText, newText) {
@@ -333,11 +344,11 @@ BarWidget {
     var trimmed = String(newText || "").trim()
     if (trimmed === "") return
     var d = root.viewDate || Model.todayIso()
-    var args = ["edit", "--date", d, "--line", String(Math.floor(n)), "--stdin"]
+    var args = ["edit", "--date", d, "--line", String(Math.floor(n))]
     var fields = { text: trimmed }
     if (typeof expectText === "string" && expectText !== "")
       fields.expectText = expectText
-    root.runAction(args, root.secretFieldsPayload(fields))
+    root.runAction(args, fields)
   }
 
   function deleteTodo(line, text, withChildren) {
@@ -345,14 +356,10 @@ BarWidget {
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
     var args = ["delete", "--date", d, "--line", String(Math.floor(n))]
-    var stdin = ""
-    if (typeof text === "string" && text !== "") {
-      args.push("--stdin")
-      stdin = root.secretFieldsPayload({ expectText: text })
-    }
+    var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
     if (withChildren === true)
       args.push("--with-children")
-    root.runAction(args, stdin)
+    root.runAction(args, fields)
   }
 
   function deferTodo(line, text, withChildren) {
@@ -360,14 +367,10 @@ BarWidget {
     if (!isFinite(n) || n < 1) return
     var d = root.viewDate || Model.todayIso()
     var args = ["defer", "--date", d, "--line", String(Math.floor(n))].concat(root.insertHeadingArgs())
-    var stdin = ""
-    if (typeof text === "string" && text !== "") {
-      args.push("--stdin")
-      stdin = root.secretFieldsPayload({ expectText: text })
-    }
+    var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
     if (withChildren === true)
       args.push("--with-children")
-    root.runAction(args, stdin)
+    root.runAction(args, fields)
   }
 
   function indentTodo(line, text, delta) {
@@ -376,26 +379,22 @@ BarWidget {
     var d = root.viewDate || Model.todayIso()
     var cmd = Number(delta) < 0 ? "outdent" : "indent"
     var args = [cmd, "--date", d, "--line", String(Math.floor(n))]
-    var stdin = ""
-    if (typeof text === "string" && text !== "") {
-      args.push("--stdin")
-      stdin = root.secretFieldsPayload({ expectText: text })
-    }
-    root.runAction(args, stdin)
+    var fields = typeof text === "string" && text !== "" ? { expectText: text } : null
+    root.runAction(args, fields)
   }
 
   function undoLast() {
-    root.runAction(["undo"])
+    root.runAction(["undo"], null)
   }
 
   function carryOver() {
     var d = root.viewDate || Model.todayIso()
-    root.runAction(["carry-over", "--date", d].concat(root.insertHeadingArgs()))
+    root.runAction(["carry-over", "--date", d].concat(root.insertHeadingArgs()), null)
   }
 
   function openInObsidian() {
     var d = root.viewDate || Model.todayIso()
-    root.runAction(["open", "--date", d])
+    root.runAction(["open", "--date", d], null)
   }
 
   function injectPanel() {
@@ -478,6 +477,13 @@ BarWidget {
           root.weekDays = parsed.days || []
       }
     }
+    onStarted: {
+      // Same private channel as actionProc: deliver after start, then close
+      // stdin so the backend sees EOF before it reads.
+      if (root.pendingWeekStdin !== "")
+        weekProc.write(root.pendingWeekStdin)
+      weekProc.stdinEnabled = false
+    }
   }
 
   Process {
@@ -496,6 +502,13 @@ BarWidget {
       watchProc.startedOnce = true
       watchProc.startedAtMs = Date.now()
       watchProc.lastError = ""
+      // The vault root (and archive pattern) arrive on stdin, never in argv:
+      // this process runs for the whole session, so its cmdline would expose
+      // the absolute path to every local user otherwise (#102). Write after
+      // start, then close stdin so the backend sees EOF.
+      if (root.pendingWatchStdin !== "")
+        watchProc.write(root.pendingWatchStdin)
+      watchProc.stdinEnabled = false
       // The stop this flag described is behind us; a fresh process means any
       // exit from here on is unexpected again.
       root.watchRestarting = false
@@ -566,7 +579,10 @@ BarWidget {
     onTriggered: {
       if (root.watchBinaryExhausted) return
       if (root.watchBinary === "") return
-      watchProc.command = [root.watchBinary].concat(root.withVault(["watch"].concat(root.headingArgs())))
+      root.pendingWatchStdin = root.privatePayload(null)
+      watchProc.stdinEnabled = true
+      watchProc.command = [root.watchBinary].concat(
+        ["watch"].concat(root.headingArgs()).concat(["--stdin"]))
       watchProc.running = true
     }
   }

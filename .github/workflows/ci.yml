@@ -73,6 +73,9 @@ jobs:
       - name: Watch restart state-machine tests
         run: node omarchy/watch-restart.test.mjs
 
+      - name: Widget argv privacy tests
+        run: node omarchy/widget-argv.test.mjs
+
   # No separate msrv job: rust-version in Cargo.toml is pinned to the same
   # 1.98.1 toolchain used everywhere else (rust-toolchain.toml), so a
   # dedicated "does it build on the declared minimum" job would just rebuild
