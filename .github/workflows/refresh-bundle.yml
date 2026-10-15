@@ -15,6 +15,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/build-bundle.sh"
+      - "scripts/bundle-env.sh"
       - "scripts/bundle-source-id.sh"
       - ".github/workflows/refresh-bundle.yml"
 
