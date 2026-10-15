@@ -176,8 +176,13 @@ enum Command {
 }
 
 /// Sensitive fields the widget sends on stdin so they never appear in argv.
+///
+/// `deny_unknown_fields` is load-bearing: an absent `expectText` means "no
+/// stale-view check was requested", so a typo'd or snake_cased key would
+/// otherwise be dropped silently and the mutation would run against a stale
+/// view instead of erroring.
 #[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StdinFields {
     #[serde(default)]
     text: Option<String>,

@@ -23,7 +23,7 @@ fn temp_vault(name: &str) -> Vault {
     Vault(dir)
 }
 
-fn run_with_stdin(vault: &Vault, args: &[&str], stdin_json: &str) -> serde_json::Value {
+fn run_raw(vault: &Vault, args: &[&str], stdin_json: &str) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_obsidian-daily-qs"))
         .args(["--vault", vault.0.to_str().unwrap()])
         .args(args)
@@ -36,7 +36,11 @@ fn run_with_stdin(vault: &Vault, args: &[&str], stdin_json: &str) -> serde_json:
         let mut stdin = child.stdin.take().expect("stdin");
         stdin.write_all(stdin_json.as_bytes()).unwrap();
     }
-    let output = child.wait_with_output().unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn run_with_stdin(vault: &Vault, args: &[&str], stdin_json: &str) -> serde_json::Value {
+    let output = run_raw(vault, args, stdin_json);
     assert!(
         output.status.success(),
         "stderr={} stdout={}",
@@ -96,6 +100,48 @@ fn add_and_edit_read_sensitive_fields_from_stdin() {
             .iter()
             .any(|t| t["text"] == "from-argv")
     );
+}
+
+#[test]
+fn unknown_stdin_key_is_rejected_and_changes_nothing() {
+    let vault = temp_vault("unknown-key");
+    let date = "2026-10-03";
+
+    let added = run_with_stdin(
+        &vault,
+        &["add", "--date", date, "--stdin"],
+        r#"{"text":"keep me open"}"#,
+    );
+    let line = added["todos"][0]["line"].as_u64().unwrap();
+
+    // `expect_text` is not a known field. Before `deny_unknown_fields` it was
+    // dropped, which read as "no expectation given" and skipped the guard.
+    let output = run_raw(
+        &vault,
+        &[
+            "toggle",
+            "--date",
+            date,
+            "--line",
+            &line.to_string(),
+            "--stdin",
+        ],
+        r#"{"expect_text":"keep me open"}"#,
+    );
+    let rejected: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rejected["state"], "error");
+    assert!(
+        rejected["error"]
+            .as_str()
+            .unwrap()
+            .contains("invalid stdin JSON"),
+        "unexpected error: {}",
+        rejected["error"]
+    );
+
+    // Nothing was toggled: the todo is still open.
+    let status = run_with_stdin(&vault, &["status", "--date", date], "");
+    assert_eq!(status["todos"][0]["checked"], false);
 }
 
 #[test]
