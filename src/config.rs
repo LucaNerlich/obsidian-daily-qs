@@ -197,9 +197,7 @@ impl Vault {
         for part in relative.split('/') {
             push_safe_component(&mut path, part)?;
         }
-        if path.extension().is_none() {
-            path.set_extension("md");
-        }
+        with_md_suffix(&mut path);
         ensure_under_root(&self.root, &path)?;
         Ok(path)
     }
@@ -247,9 +245,7 @@ impl Vault {
         for part in relative.split('/').chain(name.split('/')) {
             push_safe_component(&mut path, part)?;
         }
-        if path.extension().is_none() {
-            path.set_extension("md");
-        }
+        with_md_suffix(&mut path);
         ensure_under_root(&self.root, &path)?;
         Ok(path)
     }
@@ -260,9 +256,7 @@ impl Vault {
         for part in rel.split('/') {
             push_safe_component(&mut path, part).ok()?;
         }
-        if path.extension().is_none() {
-            path.set_extension("md");
-        }
+        with_md_suffix(&mut path);
         ensure_under_root(&self.root, &path).ok()?;
         Some(path)
     }
@@ -279,6 +273,27 @@ fn sanitize_rel(value: String) -> String {
         .filter(|p| !p.is_empty() && *p != "." && *p != "..")
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// Append the note extension unless the file name already carries it.
+///
+/// `Path::extension()` cannot be used as an "is it suffixed" test on its own: a
+/// daily-notes format like `DD.MM.YYYY` renders "20.08.2026", whose extension
+/// is "2026", and `set_extension("md")` would rewrite that to "20.08.md"
+/// instead of appending. Comparing the extension to `md` and *appending* keeps
+/// both cases right, and a format that already ends in `.md` is not doubled.
+fn with_md_suffix(path: &mut PathBuf) {
+    let already_md = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+    if already_md {
+        return;
+    }
+    if let Some(name) = path.file_name() {
+        let mut suffixed = name.to_os_string();
+        suffixed.push(".md");
+        path.set_file_name(suffixed);
+    }
 }
 
 fn push_safe_component(path: &mut PathBuf, part: &str) -> Result<(), VaultError> {
@@ -355,6 +370,76 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let path = vault.daily_note_path(&cfg, date).unwrap();
         assert_eq!(path, root.join("2026-08-20.md"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dotted_date_format_still_gets_md_suffix() {
+        // `DD.MM.YYYY` renders "20.08.2026", whose `Path::extension()` is
+        // "2026"; the note must still be written as "20.08.2026.md" rather
+        // than left extension-less or rewritten to "20.08.md".
+        let root = tmp_vault("dotted-format");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"folder":"Daily","format":"DD.MM.YYYY"}"#,
+        )
+        .unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
+        let cfg = vault.daily_notes_config().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        assert_eq!(
+            vault.daily_note_path(&cfg, date).unwrap(),
+            root.join("Daily/20.08.2026.md")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn year_first_dotted_format_gets_md_suffix() {
+        let root = tmp_vault("dotted-year-first");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"format":"YYYY.MM.DD"}"#,
+        )
+        .unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
+        let cfg = vault.daily_notes_config().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        assert_eq!(
+            vault.daily_note_path(&cfg, date).unwrap(),
+            root.join("2026.08.20.md")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_existing_md_suffix_is_not_doubled() {
+        let root = tmp_vault("already-md");
+        fs::write(
+            root.join(".obsidian/daily-notes.json"),
+            r#"{"format":"YYYY-MM-DD.md","template":"Templates/Daily.md"}"#,
+        )
+        .unwrap();
+        let vault = Vault {
+            root: root.clone(),
+            archive: None,
+        };
+        let cfg = vault.daily_notes_config().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        assert_eq!(
+            vault.daily_note_path(&cfg, date).unwrap(),
+            root.join("2026-08-20.md")
+        );
+        assert_eq!(
+            vault.template_path(&cfg).unwrap(),
+            root.join("Templates/Daily.md")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
