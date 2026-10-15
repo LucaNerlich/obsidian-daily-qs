@@ -40,7 +40,9 @@ pub struct Snapshot {
     pub done_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub todos: Option<Vec<TodoItem>>,
-    /// Absolute `obsidian://open?path=…` URI for the daily note path.
+    /// `obsidian://open?vault=…&file=…` for the daily note, or the absolute
+    /// `obsidian://open?path=…` fallback when the vault-relative form cannot be
+    /// used (see `open_uri` in `open.rs`).
     #[serde(rename = "obsidianUri", skip_serializing_if = "Option::is_none")]
     pub obsidian_uri: Option<String>,
     /// Open todos on the most recent previous daily note with open items

@@ -169,6 +169,14 @@ obsidian-daily-qs carry-over --heading Inbox
 obsidian-daily-qs open
 ```
 
+`open` hands Obsidian a `vault=`/`file=` URI, so `xdg-open`'s command line
+carries only the vault folder's name and the note's path inside it — not your
+absolute vault path. When the vault-relative form cannot be used (the folder is
+not a vault root, or the note is not inside it), it falls back to the absolute
+`obsidian://open?path=…` form, which does put that path on the command line.
+Pass sensitive todo text on stdin (`--stdin`) rather than `--text` for the same
+reason.
+
 ## Development
 
 ```bash
