@@ -355,7 +355,28 @@ fn read_stdin_fields() -> Result<StdinFields, String> {
     if trimmed.is_empty() {
         return Err("expected JSON fields on stdin".into());
     }
-    serde_json::from_str(trimmed).map_err(|err| format!("invalid stdin JSON: {err}"))
+    // Parse to a value first: serde_derive also accepts a positional (array)
+    // form for a struct, which `deny_unknown_fields` does not police — an array
+    // body would decode positionally and a mistyped expectation would be
+    // silently dropped, exactly the bug this guard exists to prevent.
+    let value: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|_| stdin_shape_error(0, 0))?;
+    if !value.is_object() {
+        return Err(stdin_shape_error(0, 0));
+    }
+    // Never format serde's error verbatim: its type errors quote the offending
+    // value, which can be the user's private todo text, and this message is
+    // surfaced by the widget.
+    serde_json::from_value(value).map_err(|err| stdin_shape_error(err.line(), err.column()))
+}
+
+fn stdin_shape_error(line: usize, column: usize) -> String {
+    let where_ = if line > 0 {
+        format!(" (line {line}, column {column})")
+    } else {
+        String::new()
+    };
+    format!("invalid stdin JSON: expected an object with `text`/`expectText`{where_}")
 }
 
 fn resolve_text(text: Option<String>, stdin: bool) -> Result<String, String> {
@@ -371,6 +392,12 @@ fn resolve_expect_text(expect_text: Option<String>, stdin: bool) -> Result<Optio
         return Ok(empty_to_none(expect_text));
     }
     let fields = read_stdin_fields()?;
+    // `text` is a declared field but not one this command takes. Silently
+    // ignoring it would let a producer that names the expected text `text` skip
+    // the stale-view guard and mutate the wrong line with a success result.
+    if fields.text.is_some_and(|text| !text.trim().is_empty()) {
+        return Err("unexpected `text` on stdin: this command takes `expectText`".into());
+    }
     Ok(empty_to_none(fields.expect_text))
 }
 

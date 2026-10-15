@@ -142,6 +142,73 @@ fn unknown_stdin_key_is_rejected_and_changes_nothing() {
     // Nothing was toggled: the todo is still open.
     let status = run_with_stdin(&vault, &["status", "--date", date], "");
     assert_eq!(status["todos"][0]["checked"], false);
+
+    // A non-object body must not decode positionally: serde_derive accepts an
+    // array form for a struct, and `deny_unknown_fields` does not apply to it,
+    // so an array would silently skip the guard.
+    let array = run_raw(
+        &vault,
+        &[
+            "toggle",
+            "--date",
+            date,
+            "--line",
+            &line.to_string(),
+            "--stdin",
+        ],
+        r#"["keep me open"]"#,
+    );
+    let rejected: serde_json::Value = serde_json::from_slice(&array.stdout).unwrap();
+    assert_eq!(rejected["state"], "error", "{rejected}");
+
+    // A payload that names the expectation `text` is ignored by the struct, so
+    // it must be rejected rather than treated as "no expectation given".
+    let wrong_key = run_raw(
+        &vault,
+        &[
+            "toggle",
+            "--date",
+            date,
+            "--line",
+            &line.to_string(),
+            "--stdin",
+        ],
+        r#"{"text":"NOT the actual text"}"#,
+    );
+    let rejected: serde_json::Value = serde_json::from_slice(&wrong_key.stdout).unwrap();
+    assert_eq!(rejected["state"], "error", "{rejected}");
+    assert!(
+        rejected["error"].as_str().unwrap().contains("expectText"),
+        "unclear error: {}",
+        rejected["error"]
+    );
+
+    let status = run_with_stdin(&vault, &["status", "--date", date], "");
+    assert_eq!(
+        status["todos"][0]["checked"], false,
+        "a rejected payload must not have mutated the note"
+    );
+}
+
+#[test]
+fn malformed_stdin_does_not_echo_the_private_payload() {
+    let vault = temp_vault("echo");
+    let date = "2026-10-03";
+    let secret = "private vault todo about salary";
+
+    // A bare string is a type error; serde's own message would quote it.
+    let output = run_raw(
+        &vault,
+        &["toggle", "--date", date, "--line", "1", "--stdin"],
+        &format!(r#""{secret}""#),
+    );
+    let snap: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(snap["state"], "error");
+    let error = snap["error"].as_str().unwrap();
+    assert!(
+        !error.contains(secret),
+        "the CLI echoed private stdin content into the error: {error}"
+    );
 }
 
 #[test]
